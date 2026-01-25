@@ -1,0 +1,150 @@
+<ui:UiWindow x:Class="ProtoTestTool.ScriptEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:ui="clr-namespace:Wpf.Ui.Controls;assembly=Wpf.Ui"
+        Title="Script Editor" Height="800" Width="1000"
+        WindowStartupLocation="CenterScreen"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowCornerPreference="Round">
+
+    <!-- Resources -->
+    <ui:UiWindow.Resources>
+        <Style x:Key="EditorTabStyle" TargetType="RadioButton">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#D4D4D4"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" BorderBrush="Transparent" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Border" Property="BorderBrush" Value="#007ACC"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ui:UiWindow.Resources>
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- TitleBar -->
+            <RowDefinition Height="*"/>    <!-- Editor -->
+            <RowDefinition Height="5"/>    <!-- Splitter -->
+            <RowDefinition Height="Auto"/> <!-- Logs Panel Header -->
+            <RowDefinition Height="150"/>  <!-- Logs Content -->
+            <RowDefinition Height="Auto"/> <!-- Status Bar -->
+        </Grid.RowDefinitions>
+
+        <!-- 0. Title Bar with Menu and Toolbar -->
+        <ui:TitleBar Grid.Row="0">
+             <ui:TitleBar.Header>
+                 <Grid>
+                     <Grid.ColumnDefinitions>
+                         <ColumnDefinition Width="Auto"/> <!-- Title -->
+                         <ColumnDefinition Width="Auto"/> <!-- Menu -->
+                         <ColumnDefinition Width="*"/>
+                         <ColumnDefinition Width="Auto"/> <!-- Toolbar -->
+                     </Grid.ColumnDefinitions>
+                     
+                     <!-- Manual Title -->
+                     <TextBlock Grid.Column="0" Text="Script Editor" VerticalAlignment="Center" Margin="15,0,15,0" FontWeight="SemiBold" FontSize="12"/>
+
+                     <!-- Menu -->
+                     <Menu Grid.Column="1" Background="Transparent" VerticalAlignment="Center">
+                         <MenuItem Header="File">
+                             <MenuItem Header="Save All" Click="CompileScriptBtn_Click"/>
+                             <Separator/>
+                             <MenuItem Header="Exit"/>
+                         </MenuItem>
+                         <MenuItem Header="Debug">
+                             <MenuItem Header="Compile &amp; Run" Click="CompileScriptBtn_Click"/>
+                         </MenuItem>
+                         <MenuItem Header="Help">
+                              <MenuItem Header="About"/>
+                         </MenuItem>
+                     </Menu>
+                     
+                     <!-- Toolbar Icons -->
+                     <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="0,0,10,0">
+                         <ui:Button x:Name="CompileScriptBtn" Appearance="Transparent" Icon="Save24" ToolTip="Save &amp; Compile" Click="CompileScriptBtn_Click"/>
+                         <ui:Button Appearance="Transparent" Icon="Play24" ToolTip="Run (Start Proxy)" Margin="5,0,0,0"/>
+                         <ui:Button Appearance="Transparent" Icon="ArrowClockwise24" ToolTip="Reload" Margin="5,0,0,0"/>
+                     </StackPanel>
+                 </Grid>
+             </ui:TitleBar.Header>
+        </ui:TitleBar>
+
+         <!-- 1. Editor Tabs (Manual Implementation to keep WebViews alive) -->
+         <Grid Grid.Row="1">
+             <Grid.RowDefinitions>
+                 <RowDefinition Height="Auto"/> <!-- Tabs -->
+                 <RowDefinition Height="*"/>    <!-- Content -->
+             </Grid.RowDefinitions>
+
+             <!-- Custom Tab Strip -->
+             <Border BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Margin="0,0,0,0">
+                 <StackPanel Orientation="Horizontal" Background="Transparent">
+                     <RadioButton Content="PacketRegistry.csx" IsChecked="True" Checked="Tab_Checked" Tag="RegistryEditor" Style="{StaticResource EditorTabStyle}"/>
+                     <RadioButton Content="PacketHeader.csx" Checked="Tab_Checked" Tag="HeaderEditor" Style="{StaticResource EditorTabStyle}"/>
+                     <RadioButton Content="PacketSerializer.csx" Checked="Tab_Checked" Tag="SerializerEditor" Style="{StaticResource EditorTabStyle}"/>
+                     <RadioButton Content="PacketHandler.csx" Checked="Tab_Checked" Tag="ContextEditor" Style="{StaticResource EditorTabStyle}"/>
+                 </StackPanel>
+             </Border>
+
+             <!-- Editor Content Area (All loaded but hidden) -->
+             <Grid Grid.Row="1">
+                 <wv2:WebView2 x:Name="RegistryEditor" Visibility="Visible"/>
+                 <wv2:WebView2 x:Name="HeaderEditor" Visibility="Hidden"/> <!-- Use Hidden to ensure init? Collapsed might work but Hidden is safer for init -->
+                 <wv2:WebView2 x:Name="SerializerEditor" Visibility="Hidden"/>
+                 <wv2:WebView2 x:Name="ContextEditor" Visibility="Hidden"/>
+             </Grid>
+         </Grid>
+ 
+         <!-- 2. Splitter -->
+         <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="#2D2D2D" ShowsPreview="True"/>
+ 
+         <!-- 3. Output Panel Header -->
+         <Border Grid.Row="3" Background="#252526" BorderBrush="#3F3F46" BorderThickness="0,1,0,0" Padding="10,5">
+             <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="OUTPUT" FontSize="12" FontWeight="Bold" Foreground="#E7E7E7" Margin="10,0,20,0"/>
+                  <TextBlock Text="PROBLEMS" FontSize="12" Foreground="#808080" Margin="0,0,20,0"/>
+                  <TextBlock Text="TERMINAL" FontSize="12" Foreground="#808080"/>
+             </StackPanel>
+         </Border>
+
+         <!-- 4. Script Logs Content -->
+         <ui:TextBox Grid.Row="4" x:Name="ScriptLogBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextWrapping="Wrap" Background="#1E1E1E" Foreground="#D4D4D4" FontFamily="Consolas" BorderThickness="0" Padding="10"/>
+
+         <!-- 5. Status Bar -->
+         <Border Grid.Row="5" Background="#007ACC" Height="22">
+             <Grid>
+                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="10,0">
+                     <ui:SymbolIcon Symbol="BranchFork24" FontSize="12" Foreground="White" Margin="0,0,5,0"/>
+                     <TextBlock Text="main" Foreground="White" FontSize="12" VerticalAlignment="Center"/>
+                     <TextBlock x:Name="StatusText" Text="Ready" Foreground="White" FontSize="12" Margin="15,0,0,0" VerticalAlignment="Center"/>
+                 </StackPanel>
+                 
+                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,10,0">
+                     <TextBlock Text="Ln 1, Col 1" Foreground="White" FontSize="12" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                     <TextBlock Text="UTF-8" Foreground="White" FontSize="12" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                     <ui:SymbolIcon Symbol="Alert24" FontSize="12" Foreground="White" VerticalAlignment="Center"/>
+                     <TextBlock Text="0" Foreground="White" FontSize="12" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                 </StackPanel>
+             </Grid>
+         </Border>
+    </Grid>
+</ui:UiWindow>

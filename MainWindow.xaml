@@ -1,0 +1,309 @@
+<ui:UiWindow x:Class="ProtoTestTool.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="clr-namespace:Wpf.Ui.Controls;assembly=Wpf.Ui"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        mc:Ignorable="d"
+        Title="TCP Packet Lab" Height="800" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowCornerPreference="Round">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- TitleBar -->
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="30"/>
+        </Grid.RowDefinitions>
+
+        <!-- 1. Title Bar -->
+        <!-- 1. Title Bar -->
+        <ui:TitleBar Grid.Row="0" Grid.ColumnSpan="2" Title="TCP Packet Lab" Height="40" Padding="10,0"/>
+        
+        <!-- Title Bar Content Overlay -->
+        <DockPanel Grid.Row="0" Grid.ColumnSpan="2" LastChildFill="False" Margin="150,0,140,0">
+             <!-- Mode Switcher -->
+            <!-- Mode Switcher -->
+            <Border Background="#1e1e1e" CornerRadius="18" Padding="3" BorderBrush="#333333" BorderThickness="1" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton Content="Test Client" IsChecked="True" Click="ModeClient_Click" Width="100"/>
+                    <RadioButton Content="Reverse Proxy" Click="ModeProxy_Click" Width="110"/>
+                    <RadioButton Content="Script Editor" Click="ModeEditor_Click" Width="110"/>
+                </StackPanel>
+            </Border>
+            
+             <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                <Border Background="#252526" CornerRadius="4" Padding="8,4" Margin="0,0,15,0" BorderBrush="#3e3e42" BorderThickness="1">
+                    <TextBlock Text="Protobuf v3" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" FontSize="12"/>
+                </Border>
+                <ui:Button x:Name="ManagePackagesBtn" Icon="AppGeneric24" Content="Packages" Click="ManagePackagesBtn_Click" Margin="0,0,15,0" Appearance="Secondary"/>
+                <ui:Button x:Name="WorkspaceBtn" Icon="Folder24" Content="Workspace" Click="WorkspaceBtn_Click" Margin="0,0,15,0" Appearance="Secondary"/>
+                <TextBlock x:Name="WorkspacePathText" Text="" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,15,0" MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+                <ui:SymbolIcon Symbol="Flash24" Foreground="{DynamicResource SystemFillColorSuccessBrush}" FontSize="16" ToolTip="Hot Reload Active"/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- 2. Sidebar -->
+        <Border Grid.Row="1" Grid.Column="0" Background="{DynamicResource ApplicationBackgroundBrush}" BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
+            <Grid Margin="15">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/> <!-- Codec -->
+                    <RowDefinition Height="Auto"/> <!-- Title -->
+                    <RowDefinition Height="*"/>    <!-- Scripts -->
+                    <RowDefinition Height="Auto"/> <!-- State -->
+                    <RowDefinition Height="Auto"/> <!-- Metrics -->
+                </Grid.RowDefinitions>
+
+                <!-- Codec Config -->
+                <StackPanel Grid.Row="0" Margin="0,0,0,20">
+                    <TextBlock Text="CODEC CONFIGURATION" Foreground="#888888" FontSize="11" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <ui:Button x:Name="LoadProtoFolderBtn" Content="Load Folder" Margin="0,0,0,5" Click="LoadProtoFolderBtn_Click" Icon="FolderOpen24" HorizontalAlignment="Stretch"/>
+                    <ui:Button x:Name="ReloadProtoBtn" Content="Reload Schemas" Click="ReloadProtoBtn_Click" Icon="ArrowClockwise24" HorizontalAlignment="Stretch" Appearance="Secondary"/>
+                    
+                    <!-- Hidden Proto Buttons mapped to Codec area -->
+                    <Button x:Name="LoadProtoFileBtn_Client" Visibility="Collapsed" Click="LoadProtoFileBtn_Click"/> 
+                    <Button x:Name="LoadProtoFolderBtn_Client" Visibility="Collapsed" Click="LoadProtoFolderBtn_Click"/>
+                    <ListBox x:Name="ProtoFileListBox" Height="100" Margin="0,5" Visibility="Collapsed"/> 
+                    <ListBox x:Name="ProtoMessageListBox" Visibility="Collapsed"/>
+                    <TextBox x:Name="ProtoLogBox" Visibility="Collapsed"/>
+                </StackPanel>
+
+                <!-- Scripts List -->
+                <TextBlock Grid.Row="1" Text="ACTIVE SCRIPTS" Foreground="#888888" FontSize="11" FontWeight="Bold" Margin="0,0,0,5"/>
+                <ListBox Grid.Row="2" Margin="0,0,0,15" Background="Transparent" BorderThickness="0" SelectionChanged="ScriptListBox_SelectionChanged">
+                     <ListBoxItem Content="PacketRegistry"/>
+                     <ListBoxItem Content="PacketSerializer"/>
+                     <ListBoxItem Content="PacketHandler"/>
+                     <ListBoxItem Content="Headers"/>
+                </ListBox>
+
+                <!-- State Store -->
+                <StackPanel Grid.Row="3" Margin="0,0,0,20">
+                    <TextBlock Text="STATE STORE" Foreground="#888888" FontSize="11" FontWeight="Bold" Margin="0,0,0,10"/>
+                    <ui:Button Content="Reset State" Click="ResetState_Click" Icon="Delete24" Appearance="Danger" HorizontalAlignment="Stretch"/> 
+                </StackPanel>
+
+                <!-- Metrics (Bottom) -->
+                <StackPanel Grid.Row="4" VerticalAlignment="Bottom">
+                    <Border Background="#2D2D30" CornerRadius="5" Padding="10" BorderBrush="#3E3E42" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="METRICS" Foreground="#888888" FontSize="10" FontWeight="Bold" Margin="0,0,0,5"/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="DataHistogram24" Foreground="{StaticResource SuccessBrush}" Margin="0,0,10,0"/>
+                                <StackPanel>
+                                    <TextBlock Text="Throughput" Foreground="#CCCCCC" FontSize="11"/>
+                                    <TextBlock Text="0 pkt/s" Foreground="White" FontWeight="Bold"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 3. Main Content -->
+        <Grid Grid.Row="1" Grid.Column="1" Margin="20">
+            
+            <!-- VIEW 1: Test Client -->
+            <Grid x:Name="ClientView">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/> <!-- Connection -->
+                    <RowDefinition Height="Auto"/> <!-- Pipeline -->
+                    <RowDefinition Height="*"/>    <!-- Inspector/Stream -->
+                    <RowDefinition Height="Auto"/>  <!-- Splitter -->
+                    <RowDefinition Height="150" MinHeight="100"/>  <!-- Logs -->
+                </Grid.RowDefinitions>
+
+                <!-- Connection Panel -->
+                <ui:Card Padding="15" Margin="0,0,0,15" VerticalAlignment="Stretch">
+                     <DockPanel>
+                         <TextBlock Text="Connection" FontWeight="Bold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="0,0,20,0"/>
+                         
+                         <TextBlock Text="Target:" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                         <ui:TextBox x:Name="IpBox" Text="127.0.0.1" Width="140" Margin="5,0"/>
+                         <TextBlock Text=":" VerticalAlignment="Center"/>
+                         <ui:TextBox x:Name="PortBox" Text="9000" Width="80" Margin="5,0"/>
+                         
+                         <ui:Button x:Name="ConnectBtn" Content="Connect" Click="ConnectBtn_Click" Width="100" Margin="10,0" Appearance="Primary" Icon="PlugConnected24"/>
+                         <ui:Button x:Name="DisconnectBtn" Content="Disconnect" Click="DisconnectBtn_Click" Width="100" IsEnabled="False" Appearance="Secondary" Icon="PlugDisconnected24"/>
+                         
+                         <ui:Button Content="Script Editor" Click="OpenScriptEditor_Click" Margin="20,0,0,0" Width="120" Icon="Code24"/>
+
+                         <TextBlock x:Name="ConnectionStatusText" Text="Ready" DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="{StaticResource StatusReadyBrush}" FontWeight="Bold"/>
+                     </DockPanel>
+                </ui:Card>
+
+                <!-- Packet Selection & Action -->
+                <ui:Card Grid.Row="1" Padding="15" Margin="0,0,0,15">
+                     <Grid>
+                         <Grid.ColumnDefinitions>
+                             <ColumnDefinition Width="Auto"/>
+                             <ColumnDefinition Width="15"/>
+                             <ColumnDefinition Width="*"/>
+                             <ColumnDefinition Width="Auto"/>
+                         </Grid.ColumnDefinitions>
+                         
+                         <!-- Packet Selector -->
+                         <StackPanel Grid.Column="0">
+                             <TextBlock Text="Select Packet Type:" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,5"/>
+                             <ComboBox x:Name="PacketListBox" MinWidth="300" Width="Auto" Height="35" FontSize="14" VerticalContentAlignment="Center" MaxWidth="500" MaxDropDownHeight="400" SelectionChanged="PacketListBox_SelectionChanged" DisplayMemberPath="Name" IsEditable="False" IsTextSearchEnabled="True"/>
+                         </StackPanel>
+                         
+                         <!-- Interceptor Pipeline Visualization -->
+                         <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                              <TextBlock Text="Pipeline: Message -> Headers -> Interceptor -> Serialize" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                         </StackPanel>
+
+                         <!-- Send Button -->
+                         <ui:Button x:Name="SendBtn" Grid.Column="3" Content="Send Packet" Width="140" Height="40" Click="SendBtn_Click" IsEnabled="False" Appearance="Primary" Icon="Send24"/>
+                     </Grid>
+                </ui:Card>
+
+                <!-- Split: Inspector and Logs -->
+                  <!-- Split: Inspector and Logs -->
+                 <Grid Grid.Row="2">
+                      <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="10"/>
+                          <ColumnDefinition Width="*"/>
+                      </Grid.ColumnDefinitions>
+                      
+                     <!-- Request Inspector -->
+                     <ui:Card Grid.Column="0" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                         <Grid>
+                             <Grid.RowDefinitions>
+                                 <RowDefinition Height="Auto"/>
+                                 <RowDefinition Height="*"/>
+                             </Grid.RowDefinitions>
+                             <TextBlock Text="Request Inspector" Margin="15,10" FontWeight="Bold"/>
+                             <TabControl Grid.Row="1" Margin="5">
+                                 <TabItem Header="Body (JSON)">
+                                     <wv2:WebView2 x:Name="JsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                 </TabItem>
+                                 <TabItem Header="Header (JSON)">
+                                     <wv2:WebView2 x:Name="HeaderJsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                 </TabItem>
+                                 <TabItem Header="Proto Source">
+                                     <wv2:WebView2 x:Name="ProtoSourceView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                 </TabItem>
+                             </TabControl>
+                         </Grid>
+                     </ui:Card>
+
+                     <!-- Response Inspector -->
+                     <ui:Card Grid.Column="2" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                         <Grid>
+                             <Grid.RowDefinitions>
+                                 <RowDefinition Height="Auto"/>
+                                 <RowDefinition Height="*"/>
+                             </Grid.RowDefinitions>
+                             <TextBlock Text="Response Inspector" Margin="15,10" FontWeight="Bold"/>
+                             <TabControl Grid.Row="1" Margin="5">
+                                 <TabItem Header="Body (JSON)">
+                                     <wv2:WebView2 x:Name="ResponseBoxView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                 </TabItem>
+                                 <TabItem Header="Headers">
+                                     <DataGrid x:Name="ResponseHeaderGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0" Background="Transparent">
+                                         <DataGrid.Columns>
+                                             <DataGridTextColumn Header="Key" Binding="{Binding Key}" Width="*"/>
+                                             <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*"/>
+                                         </DataGrid.Columns>
+                                     </DataGrid>
+                                 </TabItem>
+                             </TabControl>
+                         </Grid>
+                     </ui:Card>
+                </Grid>
+
+                <!-- Splitter -->
+                <GridSplitter Grid.Row="3" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="Transparent" ShowsPreview="True"/>
+
+                <!-- System Logs -->
+                <ui:Card Grid.Row="4" Margin="0,5,0,0" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="System Logs" Margin="15,10" FontWeight="Bold"/>
+                        <RichTextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" FontFamily="Consolas" VerticalScrollBarVisibility="Auto" Background="Transparent" Foreground="{DynamicResource TextFillColorSecondaryBrush}" BorderThickness="0" Margin="5" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top">
+                            <RichTextBox.Resources>
+                                <Style TargetType="{x:Type Paragraph}">
+                                    <Setter Property="Margin" Value="0"/>
+                                </Style>
+                            </RichTextBox.Resources>
+                        </RichTextBox>
+                    </Grid>
+                </ui:Card>
+            </Grid>
+
+            <!-- VIEW 2: Reverse Proxy -->
+            <Grid x:Name="ProxyView" Visibility="Collapsed">
+                 <Grid.RowDefinitions>
+                     <RowDefinition Height="Auto"/>
+                     <RowDefinition Height="*"/>
+                 </Grid.RowDefinitions>
+                 
+                 <ui:Card>
+                     <StackPanel>
+                         <TextBlock Text="Proxy Configuration" FontWeight="Bold" Margin="5,5,5,10" FontSize="14"/>
+                         <StackPanel Orientation="Horizontal" Margin="5">
+                             <TextBlock Text="Local Port:" VerticalAlignment="Center" Margin="5"/>
+                             <ui:TextBox x:Name="ProxyLocalPortBox" Text="9000" Width="80"/>
+                             <TextBlock Text="Target:" VerticalAlignment="Center" Margin="15,0,5,0"/>
+                             <ui:TextBox x:Name="ProxyTargetIpBox" Text="127.0.0.1" Width="140"/>
+                             <TextBlock Text=":" VerticalAlignment="Center"/>
+                             <ui:TextBox x:Name="ProxyTargetPortBox" Text="9001" Width="80"/>
+                             <ui:Button x:Name="ProxyStartBtn" Content="Start Proxy" Margin="20,0,0,0" Click="ProxyStartBtn_Click" Appearance="Primary"/>
+                             <ui:Button Content="Script Editor" Click="OpenScriptEditor_Click" Margin="20,0,0,0" Width="120" Icon="Code24"/>
+                         </StackPanel>
+                     </StackPanel>
+                 </ui:Card>
+
+                 <Grid Grid.Row="1" Margin="0,10,0,0">
+                      <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="200"/>
+                          <ColumnDefinition Width="*"/>
+                      </Grid.ColumnDefinitions>
+                      <ui:Card Grid.Column="0" VerticalAlignment="Stretch" Padding="0">
+                          <Grid>
+                              <Grid.RowDefinitions>
+                                  <RowDefinition Height="Auto"/>
+                                  <RowDefinition Height="*"/>
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="Interceptors" Margin="15,10" FontWeight="Bold"/>
+                              <ListBox x:Name="InterceptorListBox" Grid.Row="1" BorderThickness="0" Background="Transparent" Margin="5"/>
+                          </Grid>
+                      </ui:Card>
+                      
+                      <ui:Card Grid.Column="1" VerticalAlignment="Stretch" Padding="0" Margin="10,0,0,0">
+                          <Grid>
+                              <Grid.RowDefinitions>
+                                  <RowDefinition Height="Auto"/>
+                                  <RowDefinition Height="*"/>
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="Proxy Logs" Margin="15,10" FontWeight="Bold"/>
+                              <TextBox x:Name="ProxyLogBox" Grid.Row="1" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" Background="Transparent" Foreground="{DynamicResource TextFillColorSecondaryBrush}" BorderThickness="0" Margin="5" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top"/>
+                          </Grid>
+                      </ui:Card>
+                 </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- 4. Status Bar -->
+        <Border Grid.Row="2" Grid.ColumnSpan="2" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+            <DockPanel LastChildFill="False" Margin="10,0">
+                <TextBlock Text="Ready" Foreground="{DynamicResource SystemFillColorSuccessBrush}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="ResponseStatusText" Text="" DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            </DockPanel>
+        </Border>
+
+    </Grid>
+</ui:UiWindow>
