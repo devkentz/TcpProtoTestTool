@@ -245,7 +245,7 @@ namespace ProtoTestTool
         {
             try
             {
-                var settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, SettingsFileName);
+                var settingsPath = Path.Combine(GlobalSettings.AppDataDir, SettingsFileName);
                 if (File.Exists(settingsPath))
                 {
                     var json = File.ReadAllText(settingsPath);
@@ -396,7 +396,8 @@ namespace ProtoTestTool
         {
             try
             {
-                var settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, SettingsFileName);
+                Directory.CreateDirectory(GlobalSettings.AppDataDir);
+                var settingsPath = Path.Combine(GlobalSettings.AppDataDir, SettingsFileName);
                 var settings = new AppSettings {WorkspacePath = _workspacePath};
                 var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
                 File.WriteAllText(settingsPath, json);

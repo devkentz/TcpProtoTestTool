@@ -9,13 +9,17 @@ namespace ProtoTestTool
     public class GlobalSettings
     {
         private const string FileName = "global_settings.json";
+
+        public static string AppDataDir { get; } =
+            Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+
         public List<string> RecentWorkspaces { get; set; } = new List<string>();
 
         public static GlobalSettings Load()
         {
             try
             {
-                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, FileName);
+                var path = Path.Combine(AppDataDir, FileName);
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
@@ -30,7 +34,8 @@ namespace ProtoTestTool
         {
             try
             {
-                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, FileName);
+                Directory.CreateDirectory(AppDataDir);
+                var path = Path.Combine(AppDataDir, FileName);
                 var json = JsonConvert.SerializeObject(this, Formatting.Indented);
                 File.WriteAllText(path, json);
             }

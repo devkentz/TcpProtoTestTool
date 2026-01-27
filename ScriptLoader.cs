@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 using ProtoTestTool.ScriptContract;
 
@@ -336,7 +337,8 @@ namespace ProtoTestTool
             using var peStream = File.Create(dllPath);
             using var pdbStream = File.Create(pdbPath);
 
-            var emitResult = compilation.Emit(peStream, pdbStream);
+            var emitOptions = new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb);
+            var emitResult = compilation.Emit(peStream, pdbStream, options: emitOptions);
 
             if (!emitResult.Success)
             {

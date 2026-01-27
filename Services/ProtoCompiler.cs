@@ -14,10 +14,26 @@ namespace ProtoTestTool.Services
     {
         public static string GetProtocPath()
         {
-            var basePath = AppDomain.CurrentDomain.BaseDirectory;
-            var protocPath = Path.Combine(basePath, "protoc.exe");
-            if (File.Exists(protocPath)) return protocPath;
-            throw new FileNotFoundException($"protoc.exe not found at {protocPath}. Ensure project build copies it.");
+            // 단일 파일 publish 시 BaseDirectory는 임시 추출 경로를 가리키므로
+            // exe 실제 위치를 우선 탐색
+            var candidates = new[]
+            {
+                Path.GetDirectoryName(Environment.ProcessPath),
+                AppDomain.CurrentDomain.BaseDirectory
+            };
+
+            foreach (var dir in candidates)
+            {
+                if (string.IsNullOrEmpty(dir)) continue;
+
+                var direct = Path.Combine(dir, "protoc.exe");
+                if (File.Exists(direct)) return direct;
+
+                var inTools = Path.Combine(dir, "Tools", "protoc.exe");
+                if (File.Exists(inTools)) return inTools;
+            }
+
+            throw new FileNotFoundException("protoc.exe not found. Ensure project build copies it.");
         }
 
         /// <summary>
