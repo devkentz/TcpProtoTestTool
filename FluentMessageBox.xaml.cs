@@ -3,7 +3,7 @@ using Wpf.Ui.Controls;
 
 namespace ProtoTestTool
 {
-    public partial class FluentMessageBox : UiWindow
+    public partial class FluentMessageBox : FluentWindow
     {
         public FluentMessageBox(string title, string message)
         {

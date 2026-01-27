@@ -8,7 +8,7 @@ using System.Windows.Media;
 
 namespace ProtoTestTool
 {
-    public partial class NuGetWindow : Wpf.Ui.Controls.UiWindow
+    public partial class NuGetWindow : Wpf.Ui.Controls.FluentWindow
     {
         private readonly string _workspacePath;
         private readonly NuGetClient _client;
@@ -80,6 +80,47 @@ namespace ProtoTestTool
                 finally
                 {
                     btn.IsEnabled = true;
+                }
+            }
+        }
+        private void TabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.Source == MainTabs && MainTabs.SelectedItem is TabItem tab && tab.Header?.ToString() == "Installed")
+            {
+                RefreshInstalledPackages();
+            }
+        }
+
+        private void RefreshInstalledPackages()
+        {
+            try
+            {
+                var packages = _client.GetInstalledPackages(_workspacePath);
+                InstalledList.ItemsSource = packages;
+                StatusText.Text = $"Found {packages.Count} installed packages.";
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"Error loading installed packages: {ex.Message}";
+            }
+        }
+
+        private void UninstallBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is NuGetPackageInfo pkg)
+            {
+                if (System.Windows.MessageBox.Show($"Are you sure you want to uninstall {pkg.Id}?", "Uninstall", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        _client.UninstallPackage(pkg.Id, _workspacePath);
+                        StatusText.Text = $"Uninstalled {pkg.Id}.";
+                        RefreshInstalledPackages();
+                    }
+                    catch (Exception ex)
+                    {
+                        FluentMessageBox.ShowError($"Failed to uninstall {pkg.Id}:\n{ex.Message}");
+                    }
                 }
             }
         }

@@ -35,26 +35,26 @@ namespace ProtoTestTool.Network
 
         protected override void OnReceived(byte[] buffer, long offset, long size)
         {
-            // Client -> Proxy -> Server (Inbound)
+            // Client -> Proxy -> Server (Outbound)
             // Add to buffer
             lock (_clientBuffer)
             {
                 for (long i = 0; i < size; i++)
                     _clientBuffer.Add(buffer[offset + i]);
             }
-            _ = ProcessTrafficAsync(_clientBuffer, PacketDirection.Inbound);
+            _ = ProcessTrafficAsync(_clientBuffer, PacketDirection.Outbound);
         }
 
         // Called by UpstreamClient
         public void OnUpstreamReceived(byte[] buffer, long offset, long size)
         {
-            // Server -> Proxy -> Client (Outbound)
+            // Server -> Proxy -> Client (Inbound)
             lock (_serverBuffer)
             {
                 for (long i = 0; i < size; i++)
                     _serverBuffer.Add(buffer[offset + i]);
             }
-            _ = ProcessTrafficAsync(_serverBuffer, PacketDirection.Outbound);
+            _ = ProcessTrafficAsync(_serverBuffer, PacketDirection.Inbound);
         }
 
         private async Task ProcessTrafficAsync(List<byte> bufferList, PacketDirection direction)
@@ -80,11 +80,10 @@ namespace ProtoTestTool.Network
                     // We must pass a copy of logic reference to track consumption
                     var currentSeq = inputSpan;
 
-                    var readSize = _codec.TryDecode(ref currentSeq, out var message);
-                    if(readSize > 0)
+                    var consumed = _codec.TryDecode(ref currentSeq, out var message);
+                    if(consumed > 0)
                     {
                         // Calculate consumed amount
-                        var consumed = inputSpan.Length - readSize;
                         
                         // Extract RAW bytes for the packet (from the original array)
                         var rawMemory = new ReadOnlyMemory<byte>(currentBytes, 0, (int)consumed);
@@ -117,7 +116,7 @@ namespace ProtoTestTool.Network
                             dataToSend = mem.ToArray();
                         }
 
-                        if (direction == PacketDirection.Inbound)
+                        if (direction == PacketDirection.Outbound)
                             _upstream.SendAsync(dataToSend);
                         else
                             SendAsync(dataToSend);

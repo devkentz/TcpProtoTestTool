@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -6,8 +7,6 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Scripting;
-using Microsoft.CodeAnalysis.Scripting;
 using Microsoft.CodeAnalysis.Text;
 using ProtoTestTool.ScriptContract;
 
@@ -15,185 +14,243 @@ namespace ProtoTestTool
 {
     public class ScriptLoader
     {
-        private ScriptOptions GetScriptOptions(string scriptPath = "", IEnumerable<string>? extraRefPaths = null)
+        /// <summary>
+        /// BCL DLL blacklist - these should NEVER be added from NuGet packages
+        /// They must come from the runtime (TRUSTED_PLATFORM_ASSEMBLIES) only
+        /// </summary>
+        private static readonly HashSet<string> BclBlacklist = new(StringComparer.OrdinalIgnoreCase)
         {
-             var scriptDirectory = !string.IsNullOrEmpty(scriptPath) 
-                ? Path.GetDirectoryName(Path.GetFullPath(scriptPath)) 
-                : AppDomain.CurrentDomain.BaseDirectory;
+            // Core runtime
+            "System.Private.CoreLib",
+            "mscorlib",
+            "netstandard",
 
-             var options = ScriptOptions.Default
-                .WithFilePath(scriptPath)
-                .WithSourceResolver(ScriptSourceResolver.Default.WithBaseDirectory(scriptDirectory))
-                .WithEmitDebugInformation(true)
-                .WithReferences(
-                    typeof(object).Assembly,                           
-                    typeof(Google.Protobuf.IMessage).Assembly,         
-                    typeof(ScriptGlobals).Assembly,                   
-                    Assembly.Load("System.Runtime"),
-                    Assembly.Load("System.Collections"),
-                    Assembly.Load("netstandard"),
-                    typeof(System.Buffers.Binary.BinaryPrimitives).Assembly,
-                    typeof(System.Memory<>).Assembly
-                )
-                .WithImports(
-                    "System",
-                    "System.Collections.Generic",
-                    "Google.Protobuf",
-                    "ProtoTestTool.ScriptContract",
-                    "System.Buffers",
-                    "System.Buffers.Binary"
-                );
+            // System.* BCL assemblies that conflict with runtime
+            "System.Runtime",
+            "System.Runtime.Extensions",
+            "System.Runtime.InteropServices",
+            "System.Runtime.InteropServices.RuntimeInformation",
+            "System.Runtime.CompilerServices.Unsafe",
+            "System.Memory",
+            "System.Buffers",
+            "System.Numerics.Vectors",
+            "System.Collections",
+            "System.Collections.Concurrent",
+            "System.Collections.Immutable",
+            "System.Linq",
+            "System.Linq.Expressions",
+            "System.Text.Encoding",
+            "System.Text.Encoding.Extensions",
+            "System.Text.Json",
+            "System.Text.Encodings.Web",
+            "System.Text.RegularExpressions",
+            "System.Threading",
+            "System.Threading.Tasks",
+            "System.Threading.Tasks.Extensions",
+            "System.IO",
+            "System.IO.Compression",
+            "System.IO.FileSystem",
+            "System.Console",
+            "System.Diagnostics.Debug",
+            "System.Diagnostics.Tracing",
+            "System.ObjectModel",
+            "System.Reflection",
+            "System.Reflection.Emit",
+            "System.Reflection.Emit.ILGeneration",
+            "System.Reflection.Emit.Lightweight",
+            "System.Reflection.Extensions",
+            "System.Reflection.Metadata",
+            "System.Reflection.Primitives",
+            "System.Resources.ResourceManager",
+            "System.ComponentModel",
+            "System.ComponentModel.Primitives",
+            "System.ComponentModel.TypeConverter",
 
-            if (extraRefPaths != null)
-            {
-                foreach (var refPath in extraRefPaths)
-                {
-                    options = options.AddReferences(MetadataReference.CreateFromFile(refPath));
-                }
-            }
-            return options;
+            // Microsoft.* that should come from runtime
+            "Microsoft.CSharp",
+            "Microsoft.VisualBasic.Core",
+            "Microsoft.Win32.Primitives",
+            "Microsoft.Win32.Registry",
+        };
+
+        /// <summary>
+        /// Check if a DLL name is a BCL assembly that should be excluded
+        /// </summary>
+        public static bool IsBclAssembly(string dllPath)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(dllPath);
+
+            // Check exact match in blacklist
+            if (BclBlacklist.Contains(fileName))
+                return true;
+
+            // Check prefix patterns for broad System.*/Microsoft.* filtering
+            // But allow specific packages like Google.Protobuf, Newtonsoft.Json, etc.
+            if (fileName.StartsWith("System.", StringComparison.OrdinalIgnoreCase) &&
+                !IsAllowedSystemPackage(fileName))
+                return true;
+
+            if (fileName.StartsWith("Microsoft.", StringComparison.OrdinalIgnoreCase) &&
+                !IsAllowedMicrosoftPackage(fileName))
+                return true;
+
+            return false;
         }
 
-        private class PreProcessResult
+        /// <summary>
+        /// System.* packages that ARE allowed (not part of BCL)
+        /// </summary>
+        private static bool IsAllowedSystemPackage(string name)
         {
-            public string Code { get; set; } = "";
-            public List<string> References { get; set; } = new List<string>();
+            // These are actual NuGet packages, not BCL facades
+            var allowed = new[]
+            {
+                "System.IO.Pipelines",           // Actual NuGet package
+                "System.IO.Hashing",             // Actual NuGet package
+                "System.Reactive",               // Rx
+            };
+            return allowed.Any(a => name.Equals(a, StringComparison.OrdinalIgnoreCase));
         }
 
-        private PreProcessResult PreProcess(string code, string scriptPath, Action<string>? logger = null)
+        /// <summary>
+        /// Microsoft.* packages that ARE allowed (not part of BCL)
+        /// </summary>
+        private static bool IsAllowedMicrosoftPackage(string name)
         {
-            var result = new PreProcessResult { Code = code };
-            
-            // Check for #r directives (nuget or assembly) and #load
-            var lines = code.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-            var refLines = lines.Where(l => l.TrimStart().StartsWith("#r", StringComparison.OrdinalIgnoreCase)).ToList();
-            var loadLines = lines.Where(l => l.TrimStart().StartsWith("#load", StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (logger != null && (refLines.Any() || loadLines.Any()))
+            var allowed = new[]
             {
-                logger($"[PreProcess] Found {refLines.Count} refs, {loadLines.Count} load directives in {Path.GetFileName(scriptPath)}");
-            }
+                "Microsoft.IO.RecyclableMemoryStream",
+                "Microsoft.Extensions.Logging",
+                "Microsoft.Extensions.Logging.Abstractions",
+                "Microsoft.Extensions.DependencyInjection",
+                "Microsoft.Extensions.DependencyInjection.Abstractions",
+                "Microsoft.Extensions.Options",
+                "Microsoft.Extensions.Configuration",
+                "Microsoft.Extensions.Configuration.Abstractions",
+                "Microsoft.Extensions.Primitives",
+                "Microsoft.Bcl.AsyncInterfaces",  // This one is tricky but sometimes needed
+            };
+            return allowed.Any(a => name.Equals(a, StringComparison.OrdinalIgnoreCase));
+        }
 
-            if (refLines.Any() || loadLines.Any())
+        private CSharpCompilationOptions GetCompilationOptions()
+        {
+            return new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+                .WithOptimizationLevel(OptimizationLevel.Debug)
+                .WithPlatform(Platform.AnyCpu);
+        }
+
+        /// <summary>
+        /// Build references from TRUSTED_PLATFORM_ASSEMBLIES (runtime BCL)
+        /// This ensures we use the actual runtime types, not NuGet facades
+        /// </summary>
+        private IEnumerable<MetadataReference> GetRuntimeReferences()
+        {
+            var refs = new List<MetadataReference>();
+            var addedAssemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Get trusted platform assemblies from runtime
+            var trustedAssemblies = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
+            if (!string.IsNullOrEmpty(trustedAssemblies))
             {
-                // Comment out directives to satisfy Roslyn (Regular mode)
-                var sb = new StringBuilder();
-                foreach (var line in lines)
+                var paths = trustedAssemblies.Split(Path.PathSeparator);
+                foreach (var path in paths)
                 {
-                    var trimmed = line.TrimStart();
-                    if (trimmed.StartsWith("#r", StringComparison.OrdinalIgnoreCase) || 
-                        trimmed.StartsWith("#load", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                        continue;
+
+                    var name = Path.GetFileNameWithoutExtension(path);
+                    if (addedAssemblies.Contains(name))
+                        continue;
+
+                    try
                     {
-                        sb.AppendLine($"// {line}"); // Comment out
+                        refs.Add(MetadataReference.CreateFromFile(path));
+                        addedAssemblies.Add(name);
                     }
-                    else
+                    catch
                     {
-                        sb.AppendLine(line);
+                        // Skip problematic assemblies
                     }
-                }
-                result.Code = sb.ToString();
-
-                // Resolve Packages
-                // We need a physical file for the resolver.
-                // Use a temp file if scriptPath is not valid or we want to resolve current content.
-                // BUT, to avoid excessive temp files, if scriptPath exists and content matches, use it.
-                // Assuming content passed might be newer (editor), use temp file.
-                
-                var tempFile = Path.GetTempFileName();
-                var tempCsx = Path.ChangeExtension(tempFile, ".csx");
-                File.Move(tempFile, tempCsx);
-
-                try
-                {
-                    File.WriteAllText(tempCsx, code); // Write ORIGINAL code with #r nuget
-
-                    var loggerFactory = new Dotnet.Script.DependencyModel.Logging.LogFactory(type => (level, message, exception) => 
-                    {
-                        var msg = $"[{level}] {message}";
-                        System.Diagnostics.Debug.WriteLine(msg);
-                        logger?.Invoke(msg);
-                    });
-                    var resolver = new Dotnet.Script.DependencyModel.Runtime.RuntimeDependencyResolver(loggerFactory, true);
-                    
-                    var dependencies = resolver.GetDependencies(tempCsx, Array.Empty<string>());
-                    int count = 0;
-                    foreach (dynamic dep in dependencies)
-                    {
-                        // AssemblyPaths property does not exist on RuntimeDependency.
-                        // We must iterate 'Assemblies' (RuntimeAssembly) and access 'Path'.
-                        foreach (dynamic asm in dep.Assemblies)
-                        {
-                             var refPath = (string)asm.Path;
-                             result.References.Add(refPath);
-                             logger?.Invoke($"Resolved: {Path.GetFileName(refPath)}");
-                             count++;
-                        }
-                    }
-                    logger?.Invoke($"Total resolved references: {count}");
-                }
-                catch (Exception ex)
-                {
-                     logger?.Invoke($"[Error] NuGet resolution failed: {ex.Message}");
-                     System.Diagnostics.Debug.WriteLine($"NuGet resolution failed: {ex.Message}");
-                }
-                finally
-                {
-                    if (File.Exists(tempCsx)) File.Delete(tempCsx);
                 }
             }
 
-            return result;
+            return refs;
         }
 
-        public (System.Collections.Immutable.ImmutableArray<Diagnostic> Diagnostics, List<string> References) ValidateScript(string code, string scriptPath = "", Action<string>? logger = null, IEnumerable<string>? extraRefPaths = null)
+        /// <summary>
+        /// Get application-specific references (non-BCL)
+        /// </summary>
+        private IEnumerable<MetadataReference> GetApplicationReferences()
         {
-            var preProcess = PreProcess(code, scriptPath, logger);
-            var refs = preProcess.References.Select(r => MetadataReference.CreateFromFile(r)).ToList(); 
-            // Add extra refs
-            if (extraRefPaths != null)
+            var refs = new List<MetadataReference>();
+            var addedAssemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Add Google.Protobuf
+            AddIfNotExists(refs, addedAssemblies, typeof(Google.Protobuf.IMessage).Assembly.Location);
+
+            // Add ScriptContract (ProtoTestTool types)
+            AddIfNotExists(refs, addedAssemblies, typeof(ScriptGlobals).Assembly.Location);
+
+            return refs;
+        }
+
+        private void AddIfNotExists(List<MetadataReference> refs, HashSet<string> added, string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                return;
+
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (added.Contains(name))
+                return;
+
+            refs.Add(MetadataReference.CreateFromFile(path));
+            added.Add(name);
+        }
+
+        /// <summary>
+        /// Filter external references to exclude BCL assemblies
+        /// </summary>
+        public IEnumerable<string> FilterReferences(IEnumerable<string> referencePaths)
+        {
+            foreach (var path in referencePaths)
             {
-                refs.AddRange(extraRefPaths.Select(r => MetadataReference.CreateFromFile(r)));
-            }
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                    continue;
 
-            var mergedRefs = preProcess.References.Concat(extraRefPaths ?? Enumerable.Empty<string>()).ToList();
-            var baseOptions = GetScriptOptions(scriptPath, mergedRefs);
-            
-            var syntaxTree = CSharpSyntaxTree.ParseText(preProcess.Code, new CSharpParseOptions(LanguageVersion.Latest), scriptPath);
-            
-            var compilation = CSharpCompilation.Create(
-                Path.GetFileNameWithoutExtension(scriptPath) ?? "Validation",
-                new[] { syntaxTree },
-                baseOptions.MetadataReferences, 
-                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-                
-            return (compilation.GetDiagnostics(), mergedRefs);
+                if (IsBclAssembly(path))
+                {
+                    // Log filtered BCL for debugging
+                    System.Diagnostics.Debug.WriteLine($"[ScriptLoader] Filtered BCL: {Path.GetFileName(path)}");
+                    continue;
+                }
+
+                yield return path;
+            }
         }
 
-        public async Task<string> CompileToDllAsync(string scriptPath, IEnumerable<string>? referencePaths = null, Action<string>? logger = null)
+        public async Task<string> CompileFilesToDllAsync(
+            IEnumerable<string> sourceFiles,
+            IEnumerable<string>? referencePaths = null,
+            Action<string>? logger = null,
+            string? assemblyName = null,
+            string? outputPath = null)
         {
-            if (!File.Exists(scriptPath))
-                throw new FileNotFoundException($"Script file not found: {scriptPath}");
+            var sourceFileStart = sourceFiles.FirstOrDefault();
+            var dir = sourceFileStart != null ? Path.GetDirectoryName(sourceFileStart) : AppDomain.CurrentDomain.BaseDirectory;
 
-            var code = await File.ReadAllTextAsync(scriptPath);
-            var preProcess = PreProcess(code, scriptPath, logger);
-            
-            var refs = (referencePaths ?? Enumerable.Empty<string>()).Concat(preProcess.References).ToList();
+            // Use provided assemblyName or generate random one
+            var finalAssemblyName = assemblyName ?? $"ScriptBundle_{Guid.NewGuid():N}";
 
-            var options = GetScriptOptions(scriptPath, refs);
-            
-            var sourceText = SourceText.From(preProcess.Code, Encoding.UTF8, checksumAlgorithm: SourceHashAlgorithm.Sha1);
-            
-            var dir = Path.GetDirectoryName(scriptPath) ?? AppDomain.CurrentDomain.BaseDirectory;
-            var name = Path.GetFileNameWithoutExtension(scriptPath);
-            var randomId = Guid.NewGuid().ToString("N").Substring(0, 8);
-            var dllPath = Path.Combine(dir, $"{name}.{randomId}.dll");
-            var pdbPath = Path.Combine(dir, $"{name}.{randomId}.pdb");
+            // Use provided outputPath or generate in source directory
+            var dllPath = outputPath ?? Path.Combine(dir ?? "", $"{finalAssemblyName}.dll");
+            var pdbPath = Path.ChangeExtension(dllPath, ".pdb");
 
-            // Cleanup old files
+            // Cleanup old ScriptBundle files (legacy)
             try
             {
-                var oldFiles = Directory.GetFiles(dir, $"{name}.*.dll")
-                    .Concat(Directory.GetFiles(dir, $"{name}.*.pdb"));
+                var oldFiles = Directory.GetFiles(dir ?? "", "ScriptBundle.*.dll")
+                    .Concat(Directory.GetFiles(dir ?? "", "ScriptBundle.*.pdb"));
                 foreach (var oldFile in oldFiles)
                 {
                     try { File.Delete(oldFile); } catch { }
@@ -201,26 +258,83 @@ namespace ProtoTestTool
             }
             catch { }
 
-            // Always use Standard C# Compilation to ensure types are top-level (not nested in Script/Submission class)
-            // This allows PacketRegistry types to be visible to PacketSerializer.
+            // Prepare Syntax Trees
+            var syntaxTrees = new List<SyntaxTree>();
             var parseOptions = new CSharpParseOptions(LanguageVersion.Latest, DocumentationMode.Parse, SourceCodeKind.Regular);
-            var syntaxTree = CSharpSyntaxTree.ParseText(sourceText, parseOptions, scriptPath);
-            // Use unique assembly name to avoid 'Assembly with same name is already loaded' error
-            // when loading multiple versions of the same script in the default context.
-            var assemblyName = $"{Path.GetFileNameWithoutExtension(scriptPath)}_{randomId}";
-            var references = options.MetadataReferences;
 
-            CSharpCompilation compilation = CSharpCompilation.Create(
-                assemblyName,
-                new[] { syntaxTree },
+            foreach (var file in sourceFiles)
+            {
+                if (!File.Exists(file)) continue;
+                var text = await File.ReadAllTextAsync(file);
+                var sourceText = SourceText.From(text, Encoding.UTF8);
+                var tree = CSharpSyntaxTree.ParseText(sourceText, parseOptions, file);
+                syntaxTrees.Add(tree);
+            }
+
+            // Build references: Runtime BCL + Application + Filtered External
+            var references = new List<MetadataReference>();
+            var addedAssemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Add runtime BCL references (from TRUSTED_PLATFORM_ASSEMBLIES)
+            foreach (var r in GetRuntimeReferences())
+            {
+                var name = Path.GetFileNameWithoutExtension(r.Display ?? "");
+                if (!addedAssemblies.Contains(name))
+                {
+                    references.Add(r);
+                    addedAssemblies.Add(name);
+                }
+            }
+            logger?.Invoke($"Added {addedAssemblies.Count} runtime references.");
+
+            // 2. Add application references
+            foreach (var r in GetApplicationReferences())
+            {
+                var name = Path.GetFileNameWithoutExtension(r.Display ?? "");
+                if (!addedAssemblies.Contains(name))
+                {
+                    references.Add(r);
+                    addedAssemblies.Add(name);
+                }
+            }
+
+            // 3. Add external references (filtered to exclude BCL)
+            if (referencePaths != null)
+            {
+                var filtered = FilterReferences(referencePaths).ToList();
+                var addedExternal = 0;
+
+                foreach (var refPath in filtered)
+                {
+                    var name = Path.GetFileNameWithoutExtension(refPath);
+                    if (addedAssemblies.Contains(name))
+                        continue;
+
+                    try
+                    {
+                        references.Add(MetadataReference.CreateFromFile(refPath));
+                        addedAssemblies.Add(name);
+                        addedExternal++;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.Invoke($"Warning: Could not add reference {name}: {ex.Message}");
+                    }
+                }
+
+                logger?.Invoke($"Added {addedExternal} external references.");
+            }
+
+            // Compile
+            var compilation = CSharpCompilation.Create(
+                finalAssemblyName,
+                syntaxTrees,
                 references,
-                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, 
-                    optimizationLevel: OptimizationLevel.Debug, 
-                    platform: Platform.AnyCpu)
+                GetCompilationOptions()
             );
 
-            await using var peStream = File.Create(dllPath);
-            await using var pdbStream = File.Create(pdbPath);
+            using var peStream = File.Create(dllPath);
+            using var pdbStream = File.Create(pdbPath);
 
             var emitResult = compilation.Emit(peStream, pdbStream);
 
@@ -228,53 +342,18 @@ namespace ProtoTestTool
             {
                 var errors = string.Join(Environment.NewLine, emitResult.Diagnostics
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
-                    .Select(d => $"[{Path.GetFileName(scriptPath)}] Line {d.Location.GetLineSpan().StartLinePosition.Line + 1}: {d.GetMessage()}"));
-                throw new InvalidOperationException($"Compilation failed for {Path.GetFileName(scriptPath)}:{Environment.NewLine}{errors}");
+                    .Select(d =>
+                    {
+                        var loc = d.Location.GetLineSpan();
+                        var fileName = Path.GetFileName(loc.Path);
+                        return $"[{fileName}] Line {loc.StartLinePosition.Line + 1}: {d.GetMessage()}";
+                    }));
+
+                throw new InvalidOperationException($"Compilation failed:{Environment.NewLine}{errors}");
             }
-            
+
+            logger?.Invoke("Compilation successful.");
             return dllPath;
         }
-
-        public Task<Assembly> LoadScriptWithReferencesAsync(string scriptPath, IEnumerable<string> referencePaths, Action<string>? logger = null)
-        {
-            if (!File.Exists(scriptPath))
-                throw new FileNotFoundException($"Script file not found: {scriptPath}");
-
-            var code = File.ReadAllText(scriptPath);
-            var preProcess = PreProcess(code, scriptPath, logger);
-            var refs = referencePaths.Concat(preProcess.References);
-
-            var options = GetScriptOptions(scriptPath, refs);
-            
-            var script = CSharpScript.Create(preProcess.Code, options); 
-            var compilation = script.GetCompilation();
-            
-             using var stream = File.OpenRead(scriptPath);
-             var sourceText = SourceText.From(preProcess.Code, Encoding.UTF8, checksumAlgorithm: SourceHashAlgorithm.Sha1);
-             
-             var oldTree = compilation.SyntaxTrees.First();
-             var parseOptions = oldTree.Options as CSharpParseOptions;
-             var newTree = CSharpSyntaxTree.ParseText(sourceText, parseOptions, scriptPath);
-             compilation = compilation.ReplaceSyntaxTree(oldTree, newTree);
-             
-             using var peStream = new MemoryStream();
-             using var pdbStream = new MemoryStream();
-             var emitResult = compilation.Emit(peStream, pdbStream);
-             
-             if (!emitResult.Success)
-             {
-                 var errors = string.Join(Environment.NewLine, emitResult.Diagnostics
-                     .Where(d => d.Severity == DiagnosticSeverity.Error)
-                     .Select(d => $"[{Path.GetFileName(scriptPath)}] Line {d.Location.GetLineSpan().StartLinePosition.Line + 1}: {d.GetMessage()}"));
-                 throw new InvalidOperationException($"Compilation failed for {Path.GetFileName(scriptPath)}:{Environment.NewLine}{errors}");
-             }
-             
-             peStream.Seek(0, SeekOrigin.Begin);
-             pdbStream.Seek(0, SeekOrigin.Begin);
-             var assembly = Assembly.Load(peStream.ToArray(), pdbStream.ToArray());
-             return Task.FromResult(assembly);
-        }
-
-
     }
 }

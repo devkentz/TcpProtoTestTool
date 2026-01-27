@@ -71,7 +71,7 @@ namespace ProtoTestTool
 
             var nupkgData = await _httpClient.GetByteArrayAsync(url);
             
-            // 2. Extract
+            // 2. Extract to Libs (workspacePath is already Scripts folder)
             var libsDir = Path.Combine(workspacePath, "Libs");
             Directory.CreateDirectory(libsDir);
 
@@ -102,11 +102,64 @@ namespace ProtoTestTool
                 throw new Exception("No compatible framework found (net6.0+ or netstandard2.0+)");
             }
 
+            var extractedCount = 0;
+            var skippedBcl = new List<string>();
+
             foreach (var entry in tfmGroups.First(g => g.Key == bestTfm))
             {
+                // Filter out BCL assemblies - they conflict with runtime
+                if (ScriptLoader.IsBclAssembly(entry.Name))
+                {
+                    skippedBcl.Add(entry.Name);
+                    continue;
+                }
+
                 var destPath = Path.Combine(libsDir, entry.Name);
                 if (File.Exists(destPath)) File.Delete(destPath); // Overwrite
                 entry.ExtractToFile(destPath);
+                extractedCount++;
+            }
+
+            if (skippedBcl.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NuGet] Skipped BCL DLLs: {string.Join(", ", skippedBcl)}");
+            }
+
+            if (extractedCount == 0 && skippedBcl.Count > 0)
+            {
+                throw new Exception($"Package {packageId} only contains BCL assemblies which are already provided by the runtime.");
+            }
+        }
+
+        public List<NuGetPackageInfo> GetInstalledPackages(string workspacePath)
+        {
+            var results = new List<NuGetPackageInfo>();
+            var libsDir = Path.Combine(workspacePath, "Libs");
+            if (!Directory.Exists(libsDir)) return results;
+
+            var dlls = Directory.GetFiles(libsDir, "*.dll");
+            foreach (var dll in dlls)
+            {
+                var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll);
+                results.Add(new NuGetPackageInfo
+                {
+                    Id = Path.GetFileNameWithoutExtension(dll),
+                    Version = info.FileVersion ?? "Unknown",
+                    Description = info.FileDescription ?? "Installed Library",
+                    Authors = info.CompanyName ?? "",
+                    BuildDownloads = 0
+                });
+            }
+            return results;
+        }
+
+        public void UninstallPackage(string packageId, string workspacePath)
+        {
+            var libsDir = Path.Combine(workspacePath, "Libs");
+            var dllPath = Path.Combine(libsDir, $"{packageId}.dll");
+            if (File.Exists(dllPath))
+            {
+                File.Delete(dllPath);
             }
         }
 

@@ -3,18 +3,18 @@ using System.Threading.Tasks;
 namespace ProtoTestTool.ScriptContract
 {
     /// <summary>
-    /// Interceptor for Reverse Proxy Mode.
+    /// Interceptor for Proxy Mode.
     /// Executed AFTER decoding and BEFORE re-serialization.
     /// </summary>
     public interface IProxyPacketInterceptor
     {
         /// <summary>
-        /// Called when a packet is received from the Client (heading to Server).
+        /// Called when a packet is received from the Server (heading to Client).
         /// </summary>
         ValueTask OnInboundAsync(ProxyPacketContext context);
 
         /// <summary>
-        /// Called when a packet is received from the Server (heading to Client).
+        /// Called when a packet is received from the Client (heading to Server).
         /// </summary>
         ValueTask OnOutboundAsync(ProxyPacketContext context);
     }

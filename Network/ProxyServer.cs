@@ -3,16 +3,17 @@ using System.Net.Sockets;
 using NetCoreServer;
 using ProtoTestTool.ScriptContract;
 
+
 namespace ProtoTestTool.Network
 {
-    public class ReverseProxyServer : TcpServer
+    public class ProxyServer : TcpServer
     {
         private readonly string _upstreamIp;
         private readonly int _upstreamPort;
         private readonly ProxyInterceptorPipeline _pipeline;
         private readonly IPacketCodec _codec;
 
-        public ReverseProxyServer(string address, int port, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline, IPacketCodec codec) 
+        public ProxyServer(string address, int port, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline, IPacketCodec codec) 
             : base(IPAddress.Parse(address), port)
         {
             _upstreamIp = upstreamIp;

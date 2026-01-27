@@ -13,7 +13,7 @@ using System.Windows.Controls;
 
 namespace ProtoTestTool
 {
-    public partial class MainWindow : Wpf.Ui.Controls.UiWindow
+    public partial class MainWindow
     {
         private SimpleTcpClient? _client;
         private readonly ScriptLoader _scriptLoader = new();
@@ -45,6 +45,15 @@ namespace ProtoTestTool
         private ObservableCollection<KeyValueItem> _requestHeaders = new ObservableCollection<KeyValueItem>(); // Kept for compilation safety until removed
         private ObservableCollection<KeyValueItem> _responseHeaders = new ObservableCollection<KeyValueItem>();
 
+        public MainWindow(string workspacePath) : this()
+        {
+            _workspacePath = workspacePath;
+            // Override loaded settings if path validates
+            InitializeWorkspaceFiles(_workspacePath);
+            LoadWorkspaceConfiguration(_workspacePath);
+            UpdateWorkspaceUI();
+        }
+
         public MainWindow()
         {
             InitializeComponent();
@@ -53,12 +62,15 @@ namespace ProtoTestTool
             // Initialize Globals with dummy logger for startup (real logger injected on compilation)
             ScriptGlobals.Initialize(
                 new ScriptStateStore(),
-                new ToolScriptLogger((msg, color) => { /* Startup Log */ })
+                new ToolScriptLogger((msg, color) =>
+                {
+                    /* Startup Log */
+                })
             );
 
             // _roslynService = new RoslynService(); (Removed)
 
-            // Load Workspace Settings
+            // Load Workspace Settings (Will be overridden if constructor arg is provided)
             LoadWorkspaceSettings();
 
             // Use Loaded event for async initialization (safer than constructor)
@@ -66,7 +78,8 @@ namespace ProtoTestTool
 
             // Load existing Protos
             Network.ProtoLoaderManager.Instance.LoadAllProtos();
-            PacketListBox.ItemsSource = Network.ProtoLoaderManager.Instance.SendPackets.Values;
+            // PacketSelectorControl handles its own loading
+            // PacketListBox.ItemsSource = Network.ProtoLoaderManager.Instance.SendPackets.Values;
 
             // Bind Headers
             // RequestHeaderGrid removed (replaced by HeaderScriptEditor)
@@ -74,6 +87,7 @@ namespace ProtoTestTool
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e) => _ = MainWindow_LoadedAsync();
+
         private async Task MainWindow_LoadedAsync()
         {
             try
@@ -83,9 +97,11 @@ namespace ProtoTestTool
                 // {
                 //    ProtoSourceViewer is now a TextBox
                 // }
-                // Show Workspace dialog if not set
-                // Always show workspace dialog on startup as requested
-                ShowWorkspaceDialog();
+                // Show Workspace dialog if not set (Handled by App.xaml.cs, but fallback if empty?)
+                if (string.IsNullOrEmpty(_workspacePath))
+                {
+                    ShowWorkspaceDialog();
+                }
 
                 // Resolution-Aware Resizing
                 var screenWidth = SystemParameters.PrimaryScreenWidth;
@@ -98,7 +114,6 @@ namespace ProtoTestTool
                     this.Left = (screenWidth - this.Width) / 2;
                     this.Top = (screenHeight - this.Height) / 2;
                 }
-
 
 
                 // Initialize Monaco Editors
@@ -121,33 +136,33 @@ namespace ProtoTestTool
 
             var uri = new Uri(editorPath).AbsoluteUri;
 
-            await InitializeSingleEditor(JsonEditorView, uri, "json");
-            await InitializeSingleEditor(HeaderJsonEditorView, uri, "json");
-            await InitializeSingleEditor(ProtoSourceView, uri, "proto");
+            await InitializeSingleEditor(JsonEditorView, uri, "json", enableMinimap: false);
+            await InitializeSingleEditor(HeaderJsonEditorView, uri, "json", enableMinimap: false);
             await InitializeSingleEditor(ResponseBoxView, uri, "json");
         }
 
-        private async Task InitializeSingleEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string uri, string language)
+        private async Task InitializeSingleEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string uri, string language, bool enableMinimap = true)
         {
             await webView.EnsureCoreWebView2Async();
             webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             webView.CoreWebView2.Settings.IsScriptEnabled = true;
             webView.CoreWebView2.Navigate(uri);
-            
+
             // Wait for ready (in a real scenario we might wait for the message, 
             // but for now a small delay + initial setup script is okay)
             webView.CoreWebView2.WebMessageReceived += (s, args) =>
             {
-               // dynamic msg = JsonConvert.DeserializeObject(args.TryGetWebMessageAsString());
-               // if (msg.type == "ready") { ... }
+                // dynamic msg = JsonConvert.DeserializeObject(args.TryGetWebMessageAsString());
+                // if (msg.type == "ready") { ... }
             };
 
-            webView.NavigationCompleted += async (s, e) => 
+            webView.NavigationCompleted += async (s, e) =>
             {
                 if (e.IsSuccess)
                 {
-                   await webView.ExecuteScriptAsync($"setLanguage('{language}');");
-                   await webView.ExecuteScriptAsync("setTheme('vs-dark');");
+                    await webView.ExecuteScriptAsync($"setLanguage('{language}');");
+                    await webView.ExecuteScriptAsync($"setMinimap({enableMinimap.ToString().ToLower()});");
+                    await webView.ExecuteScriptAsync("setTheme('vs-dark');");
                 }
             };
         }
@@ -165,24 +180,10 @@ namespace ProtoTestTool
             var result = await webView.ExecuteScriptAsync("getContent();");
             // Result is JSON encoded string (e.g. "\"content\""), need to unquote
             if (result == "null" || result == "undefined") return string.Empty;
-             return JsonConvert.DeserializeObject<string>(result) ?? string.Empty;
+            return JsonConvert.DeserializeObject<string>(result) ?? string.Empty;
         }
 
         #region Workspace Management
-        private void ManagePackagesBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_workspacePath))
-            {
-                FluentMessageBox.ShowError("Please open a workspace first.");
-                return;
-            }
-            var win = new NuGetWindow(_workspacePath);
-            win.Owner = this;
-            win.ShowDialog();
-            
-            // Recompile to pick up new packages? 
-            // Optional: _ = CompileScriptsAsync(false);
-        }
 
         private void WorkspaceBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -201,8 +202,14 @@ namespace ProtoTestTool
                 _workspacePath = dialog.SelectedPath;
                 // Save workspace to Global Settings is done inside Dialog.SelectWorkspace
                 // But we still persist specific settings if needed:
-                SaveWorkspaceSettings(); 
-                
+                SaveWorkspaceSettings();
+
+                // Clear previous proto/script state
+                _protoFolderPath = "";
+                _scriptAssembly = null;
+                ProtoLoaderManager.Instance.Clear();
+                PacketSelectorControl.LoadPackets();
+
                 InitializeWorkspaceFiles(_workspacePath);
                 LoadWorkspaceConfiguration(_workspacePath);
                 UpdateWorkspaceUI();
@@ -221,8 +228,8 @@ namespace ProtoTestTool
 
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
-            SaveWorkspaceSettings();       // Global Recent List
-            SaveWorkspaceConfiguration();  // Current Workspace Config
+            SaveWorkspaceSettings(); // Global Recent List
+            SaveWorkspaceConfiguration(); // Current Workspace Config
         }
 
         private void LoadWorkspaceSettings()
@@ -266,7 +273,7 @@ namespace ProtoTestTool
 
             // Proto Path - Load protos first
             var protoPath = config.ProtoFolderPath;
-            
+
             // Auto-discovery if config is empty
             if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
             {
@@ -280,7 +287,9 @@ namespace ProtoTestTool
                         // config.Save(path);
                     }
                 }
-                catch {}
+                catch
+                {
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
@@ -317,19 +326,7 @@ namespace ProtoTestTool
             if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath)) return;
 
             // Check if required script files exist
-            // Check if required script files exist
-            var registryPath = Path.Combine(workspacePath, "PacketRegistry.cs");
-            if (!File.Exists(registryPath)) registryPath = Path.Combine(workspacePath, "PacketRegistry.csx");
-            
-            var serializerPath = Path.Combine(workspacePath, "PacketSerializer.cs");
-            if (!File.Exists(serializerPath)) serializerPath = Path.Combine(workspacePath, "PacketSerializer.csx");
-
-            if (!File.Exists(registryPath) || !File.Exists(serializerPath))
-            {
-                Dispatcher.Invoke(() => AppendLog("[Info] Required CSX files not found. Skipping auto-compile.", Brushes.Gray));
-                return;
-            }
-
+            // Delegate validation to CompileScriptsAsync
             try
             {
                 Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
@@ -364,19 +361,22 @@ namespace ProtoTestTool
 
         private async Task LoadProtosFromFolderAsync(string folder)
         {
-             try
-             {
-                 var files = Directory.GetFiles(folder, "*.proto", SearchOption.AllDirectories);
-                 if (files.Length > 0)
-                 {
-                      await ProcessProtosAsync(files);
-                      Dispatcher.Invoke(() => AppendLog($"[Proto] Auto-loaded from {folder}", Brushes.Green));
-                 }
-             }
-             catch (Exception ex)
-             {
-                 Dispatcher.Invoke(() => AppendLog($"[Error] Auto-load proto: {ex.Message}", Brushes.Red));
-             }
+            await Task.Run(() =>
+            {
+                try
+                {
+                    Network.ProtoLoaderManager.Instance.LoadAllProtos(folder);
+                    Dispatcher.Invoke(() =>
+                    {
+                        PacketSelectorControl.Refresh();
+                        AppendLog($"[Proto] Compiled and Loaded from {folder}", Brushes.Green);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Dispatcher.Invoke(() => AppendLog($"[Error] Proto Compile: {ex.Message}", Brushes.Red));
+                }
+            });
         }
 
         private void SaveWorkspaceSettings()
@@ -384,7 +384,7 @@ namespace ProtoTestTool
             try
             {
                 var settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, SettingsFileName);
-                var settings = new AppSettings { WorkspacePath = _workspacePath };
+                var settings = new AppSettings {WorkspacePath = _workspacePath};
                 var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
                 File.WriteAllText(settingsPath, json);
             }
@@ -414,155 +414,129 @@ namespace ProtoTestTool
         {
             public string WorkspacePath { get; set; } = "";
         }
+
         #endregion
 
         #region Mode Switching
+
         private void ModeClient_Click(object sender, RoutedEventArgs e)
         {
             ClientView.Visibility = Visibility.Visible;
             ProxyView.Visibility = Visibility.Collapsed;
-
         }
 
         private void ModeProxy_Click(object sender, RoutedEventArgs e)
         {
             ClientView.Visibility = Visibility.Collapsed;
             ProxyView.Visibility = Visibility.Visible;
-
         }
 
-        private void ModeEditor_Click(object sender, RoutedEventArgs e)
-        {
-            // Removed: EditorView.Visibility = Visibility.Visible;
-        }
-        
         private void ResetState_Click(object sender, RoutedEventArgs e)
         {
-            // ScriptGlobals.Initialize(new ScriptStateStore(), ...);
-            // Or just clear.
-            if (ScriptContract.ScriptGlobals.State is ScriptContract.ScriptStateStore store)
+            if (ScriptGlobals.State is ScriptContract.ScriptStateStore store)
             {
                 store.Clear();
                 AppendLog("State Store Cleared.");
             }
         }
+
         #endregion
-
-
-        
 
 
         #region Script Loading & Editing
+
         // Moved to MainWindow.Scripting.cs
+
         #endregion
 
         #region Network Connection
-        private void ConnectBtn_Click(object sender, RoutedEventArgs e)
+
+        private void ConnectToggleBtn_Click(object sender, RoutedEventArgs e)
         {
-            var ip = IpBox.Text;
-            if (!int.TryParse(PortBox.Text, out var port))
+            if (_client != null && _client.IsConnected)
             {
-                AppendLog("Invalid Port", Brushes.Red);
-                return;
-            }
-
-            SaveWorkspaceConfiguration();
-
-            try
-            {
-                if (_client != null)
-                {
-                    _client.DisconnectAndStop();
-                    _client = null;
-                }
-
-                _client = new SimpleTcpClient(ip, port);
-                _client.Connected += () => Dispatcher.Invoke(() =>
-                {
-                    AppendLog($"Connected to {ip}:{port}", Brushes.DeepSkyBlue);
-                    UpdateConnectionState(true);
-                });
-                _client.Disconnected += () => Dispatcher.Invoke(() =>
-                {
-                    AppendLog("Disconnected", Brushes.Orange);
-                    UpdateConnectionState(false);
-                });
-                _client.DataReceived += OnDataReceived;
-                _client.ErrorOccurred += (err) => Dispatcher.Invoke(() => AppendLog($"Socket Error: {err}", Brushes.Red));
-
-                _client.ConnectAsync();
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Connection failed: {ex.Message}", Brushes.Red);
-            }
-        }
-
-        private void DisconnectBtn_Click(object sender, RoutedEventArgs e)
-        {
-            _client?.DisconnectAndStop();
-        }
-
-        private void OpenScriptEditor_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_workspacePath)) 
-            {
-                AppendLog("Please load a workspace first.", Brushes.Red);
-                return;
-            }
-
-            if (_scriptEditorWindow == null || !_scriptEditorWindow.IsLoaded)
-            {
-                _scriptEditorWindow = new ScriptEditorWindow(_workspacePath, _scriptLoader);
-                
-                _scriptEditorWindow.OnRequestCompilation += () => 
-                {
-                    var win = _scriptEditorWindow;
-                    if (win == null) return;
-                    
-                    Action<string, Brush> editorLogger = (msg, color) => 
-                    {
-                        win.Dispatcher.Invoke(() => win.AppendLog(msg, color));
-                    };
-
-                    Dispatcher.InvokeAsync(async () => 
-                    {
-                        await CompileScriptsAsync(_workspacePath, editorLogger);
-                    });
-                };
-                
-                _scriptEditorWindow.Show();
+                // Disconnect
+                _client.DisconnectAndStop();
             }
             else
             {
-                _scriptEditorWindow.Activate();
-                if (_scriptEditorWindow.WindowState == WindowState.Minimized) _scriptEditorWindow.WindowState = WindowState.Normal;
-            }
-        }
+                // Connect
+                var ip = IpBox.Text;
+                if (!int.TryParse(PortBox.Text, out var port))
+                {
+                    AppendLog("Invalid Port", Brushes.Red);
+                    return;
+                }
 
-        private void ScriptListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (e.AddedItems.Count > 0)
-            {
-                OpenScriptEditor_Click(sender, e);
-                // Keeping selection is fine as visual feedback of "last clicked"
+                SaveWorkspaceConfiguration();
+
+                // Disable button while connecting
+                ConnectToggleBtn.IsEnabled = false;
+
+                try
+                {
+                    if (_client != null)
+                    {
+                        _client.DisconnectAndStop();
+                        _client = null;
+                    }
+
+                    _client = new SimpleTcpClient(ip, port);
+                    _client.Connected += () => Dispatcher.Invoke(() =>
+                    {
+                        AppendLog($"Connected to {ip}:{port}", Brushes.DeepSkyBlue);
+                        UpdateConnectionState(true);
+                    });
+                    _client.Disconnected += () => Dispatcher.Invoke(() =>
+                    {
+                        AppendLog("Disconnected", Brushes.Orange);
+                        UpdateConnectionState(false);
+                    });
+                    _client.DataReceived += OnDataReceived;
+                    _client.ErrorOccurred += (err) => Dispatcher.Invoke(() =>
+                    {
+                        AppendLog($"Socket Error: {err}", Brushes.Red);
+                        UpdateConnectionState(false); // Ensure button resets on error
+                    });
+
+                    _client.ConnectAsync();
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"Connection failed: {ex.Message}", Brushes.Red);
+                    UpdateConnectionState(false);
+                }
             }
         }
 
         private void UpdateConnectionState(bool connected)
         {
-            ConnectBtn.IsEnabled = !connected;
-            DisconnectBtn.IsEnabled = connected;
+            ConnectToggleBtn.IsEnabled = true; // Re-enable after op
+            if (connected)
+            {
+                ConnectToggleBtn.Content = "Disconnect";
+                ConnectToggleBtn.Appearance = Wpf.Ui.Controls.ControlAppearance.Secondary;
+                ConnectToggleBtn.Icon = new Wpf.Ui.Controls.SymbolIcon(Wpf.Ui.Controls.SymbolRegular.PlugDisconnected24);
+            }
+            else
+            {
+                ConnectToggleBtn.Content = "Connect";
+                ConnectToggleBtn.Appearance = Wpf.Ui.Controls.ControlAppearance.Primary;
+                ConnectToggleBtn.Icon = new Wpf.Ui.Controls.SymbolIcon(Wpf.Ui.Controls.SymbolRegular.PlugConnected24);
+            }
+
             SendBtn.IsEnabled = connected;
         }
+
         #endregion
 
         #region Sending & Receiving
-        private async void PacketListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+
+        private async void PacketSelectorControl_PacketSelected(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (PacketListBox.SelectedItem is not PacketConvertor convertor) return;
+                if (PacketSelectorControl.SelectedPacket is not PacketConvertor convertor) return;
 
                 // Generate Default JSON
                 var (_, json) = convertor.DefaultJsonString();
@@ -573,9 +547,6 @@ namespace ProtoTestTool
 
                 // Generate Default JSON for Header
                 await LoadHeaderJsonAsync();
-
-                // Display Proto Source
-                await LoadProtoSourceAsync(convertor);
             }
             catch (Exception ex)
             {
@@ -585,14 +556,14 @@ namespace ProtoTestTool
 
         private async Task LoadHeaderJsonAsync()
         {
-            if (_headerAssembly == null)
+            if (_scriptAssembly == null)
             {
                 await SetEditorContentAsync(HeaderJsonEditorView, "{}");
                 return;
             }
 
-            var headerType = _headerAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
-                          ?? _headerAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
+            var headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
+                             ?? _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
 
             if (headerType == null)
             {
@@ -612,15 +583,14 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task LoadProtoSourceAsync(PacketConvertor convertor)
+        private async Task<string> GetProtoSourceAsync(PacketConvertor convertor)
         {
             try
             {
                 var descriptorProp = convertor.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
                 if (descriptorProp?.GetValue(null) is not MessageDescriptor descriptor)
                 {
-                    await SetEditorContentAsync(ProtoSourceView, "// Descriptor not found");
-                    return;
+                    return "// Descriptor not found";
                 }
 
                 var protoFileName = descriptor.File.Name;
@@ -630,22 +600,36 @@ namespace ProtoTestTool
 
                 if (match != null && File.Exists(match))
                 {
-                    await SetEditorContentAsync(ProtoSourceView, await File.ReadAllTextAsync(match));
+                    return await File.ReadAllTextAsync(match);
                 }
                 else
                 {
-                    await SetEditorContentAsync(ProtoSourceView, $"// Source file not found for: {protoFileName}");
+                    return $"// Source file not found for: {protoFileName}";
                 }
             }
             catch (Exception ex)
             {
-                await SetEditorContentAsync(ProtoSourceView, $"// Error loading source: {ex.Message}");
+                return $"// Error reading source: {ex.Message}";
             }
         }
-        
+
+        private async void ViewProtoSourceBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (PacketSelectorControl.SelectedPacket is not PacketConvertor convertor)
+            {
+                FluentMessageBox.ShowError("패킷을 먼저 선택해 주세요.");
+                return;
+            }
+
+            var source = await GetProtoSourceAsync(convertor);
+            var window = new SourceViewerWindow($"Proto Source: {convertor.Name}", source, "proto");
+            window.Owner = this;
+            window.Show();
+        }
+
         private async void SendBtn_Click(object sender, RoutedEventArgs e)
         {
-             await SendBtn_ClickAsync(sender, e);
+            await SendBtn_ClickAsync(sender, e);
         }
 
         private async Task SendBtn_ClickAsync(object sender, RoutedEventArgs e)
@@ -654,18 +638,18 @@ namespace ProtoTestTool
             {
                 if (_scriptAssembly == null)
                 {
-                     // Compile First
-                     await CompileScriptsAsync(_workspacePath, AppendLog);
-                     if (_scriptAssembly == null) return; 
+                    // Compile First
+                    await CompileScriptsAsync(_workspacePath, AppendLog);
+                    if (_scriptAssembly == null) return;
                 }
 
                 if (_client == null || !_client.IsConnected)
                 {
-                     FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
-                     return;
+                    FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
+                    return;
                 }
 
-                var type = (PacketListBox.SelectedItem as PacketConvertor)?.Type;
+                var type = (PacketSelectorControl.SelectedPacket as PacketConvertor)?.Type;
                 if (type == null)
                 {
                     AppendLog("No packet type selected.", Brushes.Red);
@@ -674,7 +658,7 @@ namespace ProtoTestTool
 
                 var json = await GetEditorContentAsync(JsonEditorView);
 
-                if (JsonConvert.DeserializeObject(json, type) is not IMessage message) 
+                if (JsonConvert.DeserializeObject(json, type) is not IMessage message)
                     return;
 
                 // Client Interceptor Hook
@@ -683,11 +667,10 @@ namespace ProtoTestTool
                     var ctx = new ClientPacketContext(message);
 
 
-
                     _clientInterceptor.OnBeforeSend(ctx);
                     message = ctx.Message;
                 }
-                
+
                 // Find Header Type
                 Type? headerType = null;
                 // MainWindow.Scripting.cs should expose _headerAssembly or we access it via reflection/event
@@ -695,27 +678,27 @@ namespace ProtoTestTool
                 // We are in the same partial class 'MainWindow'.
                 // verifying _headerAssembly visibility. It was added as 'private' in MainWindow.Scripting.cs (partial).
                 // Private fields in partial classes are shared across files.
-                
-                if (_headerAssembly != null)
+
+                if (_scriptAssembly != null)
                 {
-                     headerType = _headerAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                     if (headerType == null) headerType = _headerAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
+                    headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                    if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
                 }
 
                 if (headerType == null)
                 {
-                    AppendLog("PacketHeader.csx has not been compiled or Header class not found.", Brushes.Red);
+                    AppendLog("Header class not found in compiled scripts.", Brushes.Red);
                     return;
                 }
 
                 // Header JSON to Object
                 IHeader? headerObj = null;
-                try 
+                try
                 {
                     // Use HeaderJsonEditor.Text
-                    headerObj = (IHeader?)JsonConvert.DeserializeObject(await GetEditorContentAsync(HeaderJsonEditorView), headerType);
+                    headerObj = (IHeader?) JsonConvert.DeserializeObject(await GetEditorContentAsync(HeaderJsonEditorView), headerType);
                 }
-                catch(Exception ex)
+                catch (Exception ex)
                 {
                     AppendLog($"Header JSON Error: {ex.Message}", Brushes.Red);
                     return;
@@ -749,14 +732,14 @@ namespace ProtoTestTool
                 AppendLog("Not connected.", Brushes.Red);
                 return;
             }
-             
+
             if (ScriptGlobals.Codec == null)
             {
-               AppendLog("Codec not initialized (Compile first).", Brushes.Red);
-               return;
+                AppendLog("Codec not initialized (Compile first).", Brushes.Red);
+                return;
             }
 
-            try 
+            try
             {
                 // Client Interceptor Hook
                 if (_clientInterceptor != null)
@@ -777,7 +760,6 @@ namespace ProtoTestTool
         }
 
 
-
         private void OnDataReceived(byte[] data)
         {
             Dispatcher.Invoke(() =>
@@ -796,21 +778,38 @@ namespace ProtoTestTool
             {
                 var currentBytes = _receiveBuffer.ToArray();
                 ReadOnlySpan<byte> span = currentBytes.AsSpan();
-                
+
                 try
                 {
                     var readSize = ScriptGlobals.Codec.TryDecode(ref span, out var packet);
-                    if(readSize > 0)
+                    if (readSize > 0)
                     {
-                        var consumed = span.Length - readSize;
-                        _receiveBuffer.RemoveRange(0, (int)consumed);
+                        _receiveBuffer.RemoveRange(0, (int) readSize);
 
                         if (packet != null)
                         {
-                            var json = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
-                            AppendLog($"[Recv] {packet.Message.GetType().Name} ({consumed} bytes)", Brushes.LimeGreen);
-                            // Update Response Inspector
-                             _ = SetEditorContentAsync(ResponseBoxView, json);
+                            var payload = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
+                            var header = packet.Header.ToJsonString();
+                            AppendLog($"[Recv] {packet.Message.GetType().Name} ({readSize} bytes)", Brushes.LimeGreen);
+                            // Update Response Inspector (Headers)
+                            try
+                            {
+                                var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(header);
+                                _responseHeaders.Clear();
+                                if (dict != null)
+                                {
+                                    foreach (var kvp in dict)
+                                    {
+                                        _responseHeaders.Add(new KeyValueItem {Key = kvp.Key, Value = kvp.Value?.ToString() ?? ""});
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                            }
+
+                            // Update Response Inspector (Body)
+                            _ = SetEditorContentAsync(ResponseBoxView, payload);
                         }
                     }
                     else
@@ -822,18 +821,18 @@ namespace ProtoTestTool
                 {
                     AppendLog($"Decoder Error: {ex.Message}", Brushes.Red);
                     // Prevent infinite loop on bad data
-                    _receiveBuffer.Clear(); 
+                    _receiveBuffer.Clear();
                     break;
                 }
             }
         }
-        #endregion
 
+        #endregion
 
 
         internal void AppendLog(string message, Brush? color = null)
         {
-            var paragraph = new Paragraph(new Run(message)) 
+            var paragraph = new Paragraph(new Run(message))
             {
                 Foreground = color ?? Brushes.LightGray,
                 Margin = new Thickness(0)
@@ -841,5 +840,40 @@ namespace ProtoTestTool
             LogBox.Document.Blocks.Add(paragraph);
             LogBox.ScrollToEnd();
         }
+
+        private void ScriptListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // Placeholder for script selection logic
+        }
+
+        private void OpenScriptEditor_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_workspacePath))
+            {
+                MessageBox.Show("Please create or open a workspace first.", "Workspace Required", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_scriptEditorWindow == null || !_scriptEditorWindow.IsLoaded)
+            {
+                _scriptEditorWindow = new ScriptEditorWindow(_workspacePath, _scriptLoader);
+                _scriptEditorWindow.Closed += (s, args) => _scriptEditorWindow = null;
+
+                _scriptEditorWindow.OnRequestCompilation += () =>
+                {
+                    // Trigger compilation on Main Thread? 
+                    // CompileScriptsAsync is async.
+                    Dispatcher.Invoke(async () => { await CompileScriptsAsync(_workspacePath, _scriptEditorWindow.AppendLog); });
+                };
+
+                _scriptEditorWindow.Show();
+            }
+            else
+            {
+                _scriptEditorWindow.Activate();
+                if (_scriptEditorWindow.WindowState == WindowState.Minimized)
+                    _scriptEditorWindow.WindowState = WindowState.Normal;
+            }
+        }
     }
-}           
+}

@@ -3,21 +3,43 @@ using System.IO;
 using System.Reflection;
 using Google.Protobuf;
 
+using Google.Protobuf.Reflection;
+
 namespace ProtoTestTool.Network
 {
     public class ProtoLoaderManager
     {
-        public FrozenDictionary<string, PacketConvertor> PacketsByMsgId { get; private set; } = null!;
-        public FrozenDictionary<string, PacketConvertor> SendPackets { get; private set; } = null!;
-        public FrozenDictionary<string, PacketConvertor> ReceivePackets { get; private set; } = null!;
+        public FrozenDictionary<string, PacketConvertor> PacketsByMsgId { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
+        public FrozenDictionary<string, PacketConvertor> SendPackets { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
+        public FrozenDictionary<string, PacketConvertor> ReceivePackets { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
         // Request -> Response 매핑
-        public FrozenDictionary<string, string> RequestToResponse { get; private set; } = null!;
+        public FrozenDictionary<string, string> RequestToResponse { get; private set; } = FrozenDictionary<string, string>.Empty;
         
         private static readonly Lazy<ProtoLoaderManager> SInstance = new Lazy<ProtoLoaderManager>(() => new ProtoLoaderManager());
         public static ProtoLoaderManager Instance => SInstance.Value;
 
-        public void LoadAllProtos()
+        public void LoadAllProtos(string protoDirectory = "")
         {
+            var assembliesByName = new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Dynamic Compilation
+            if (!string.IsNullOrEmpty(protoDirectory) && Directory.Exists(protoDirectory))
+            {
+                try
+                {
+                    var asm = Services.ProtoCompiler.Compile(protoDirectory);
+                    if (asm != null)
+                    {
+                        assembliesByName[asm.GetName().Name ?? asm.FullName ?? "Unknown"] = asm;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Proto compilation failed: {ex.Message}");
+                    throw;
+                }
+            }
+
             var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
             // Only load the specific Protos.dll
             var dllFiles = Directory.GetFiles(baseDirectory, "Protos.dll", SearchOption.TopDirectoryOnly).ToList();
@@ -27,9 +49,6 @@ namespace ProtoTestTool.Network
             {
                 dllFiles.AddRange(Directory.GetFiles(protoGenDir, "Protos.dll", SearchOption.TopDirectoryOnly));
             }
-
-            // 1. 어셈블리 로드 (중복 제거를 위해 Dictionary 사용)
-            var assembliesByName = new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
 
             // 이미 로드된 어셈블리 먼저 추가
             foreach (var loaded in AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic))
@@ -78,6 +97,17 @@ namespace ProtoTestTool.Network
             {
                 var name = type.Name;
                 var convertor = new PacketConvertor {Name = name, Type = type};
+                
+                // Extract Category from Descriptor
+                try 
+                {
+                    var descriptorProp = type.GetProperty("Descriptor", BindingFlags.Public | BindingFlags.Static);
+                    if (descriptorProp?.GetValue(null) is MessageDescriptor descriptor)
+                    {
+                        convertor.Category = descriptor.File.Package;
+                    }
+                }
+                catch {}
 
                 allPacketsDict[name] = convertor;
 

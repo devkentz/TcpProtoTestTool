@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Google.Protobuf;
 
+
 namespace ProtoTestTool.ScriptContract
 {
     /// <summary>
@@ -26,6 +27,6 @@ namespace ProtoTestTool.ScriptContract
 
         void Register(int id, Type type);
         
-        MessageParser GetParserById(int id);
+        MessageParser GetParserById(int id); 
     }
 }

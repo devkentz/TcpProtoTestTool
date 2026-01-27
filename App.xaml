@@ -1,12 +1,13 @@
 <Application x:Class="ProtoTestTool.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             StartupUri="MainWindow.xaml">
+             xmlns:ui="clr-namespace:Wpf.Ui;assembly=Wpf.Ui"
+             xmlns:uiMarkup="clr-namespace:Wpf.Ui.Markup;assembly=Wpf.Ui">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="pack://application:,,,/Wpf.Ui;component/Styles/Theme/Dark.xaml" />
-                <ResourceDictionary Source="pack://application:,,,/Wpf.Ui;component/Styles/Wpf.Ui.xaml" />
+                <uiMarkup:ThemesDictionary Theme="Dark" />
+                <uiMarkup:ControlsDictionary />
                 <!-- Custom Brushes (Optional Override or Maps to Theme) -->
                 <ResourceDictionary Source="Themes/DarkTheme.xaml"/>
             </ResourceDictionary.MergedDictionaries>

@@ -84,3 +84,5 @@ $RECYCLE.BIN/
 # ProtoTestTool Specific
 # Exclude compiled scripts in workspace if any (though usually transient)
 *.dll.lock
+obj
+bin

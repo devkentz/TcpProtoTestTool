@@ -3,7 +3,14 @@
     "allow": [
       "Bash(dotnet build:*)",
       "Bash(git push)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(Remove-Item -Path \"C:\\\\Users\\\\kentz\\\\.claude\\\\CLAUDE.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\COMMANDS.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\FLAGS.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\PRINCIPLES.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\RULES.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\MCP.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\PERSONAS.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\ORCHESTRATOR.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\MODES.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\USER.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\CODINGGUIDE.md\", \"C:\\\\Users\\\\kentz\\\\.claude\\\\MCPINSTALL.md\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host \"SuperClaude files deleted\")",
+      "Bash(Out-Null)",
+      "Bash(Copy-Item -Path \"COMMANDS.md\",\"FLAGS.md\",\"MCP.md\",\"MODES.md\",\"ORCHESTRATOR.md\",\"PERSONAS.md\",\"PRINCIPLES.md\",\"RULES.md\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue; Copy-Item -Path \"commands\" -Destination \"backup_superclaude_20260126\"\" -Recurse -ErrorAction SilentlyContinue)",
+      "Bash(Copy-Item -Path \".superclaude-metadata.json\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue; Copy-Item -Path \"logssuperclaude*.log\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host \"Backup completed\")",
+      "Bash(powershell -Command:*)"
     ]
   }
 }

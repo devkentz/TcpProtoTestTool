@@ -1,0 +1,68 @@
+<UserControl x:Class="ProtoTestTool.Controls.PacketSelector"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:local="clr-namespace:ProtoTestTool.Controls"
+             mc:Ignorable="d" 
+             d:DesignHeight="50" d:DesignWidth="300">
+    <UserControl.Resources>
+        <HierarchicalDataTemplate x:Key="PacketNodeTemplate" ItemsSource="{Binding Children}">
+            <TextBlock Text="{Binding Name}" />
+        </HierarchicalDataTemplate>
+        <DataTemplate x:Key="PacketItemTemplate">
+            <TextBlock Text="{Binding Name}" />
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <ui:TextBox x:Name="SearchBox" 
+                    PlaceholderText="Search Packet..." 
+                    TextChanged="SearchBox_TextChanged" 
+                    GotFocus="SearchBox_GotFocus"
+                    PreviewKeyDown="SearchBox_PreviewKeyDown"
+                     />
+        
+        <ui:SymbolIcon Symbol="ChevronDown24" Grid.Column="1" Margin="-30,0,10,0" 
+                       HorizontalAlignment="Right" VerticalAlignment="Center" 
+                       FontSize="12" IsHitTestVisible="False" Foreground="Gray"/>
+
+        <Popup x:Name="SuggestionsPopup" 
+               PlacementTarget="{Binding ElementName=SearchBox}"
+               Placement="Bottom"
+               IsOpen="False"
+               StaysOpen="False"
+               Width="{Binding ActualWidth, ElementName=SearchBox}"
+               MaxHeight="400">
+            <Border Background="{DynamicResource ApplicationBackgroundBrush}" 
+                    BorderBrush="{DynamicResource ControlElevationBorderBrush}" 
+                    BorderThickness="1" 
+                    CornerRadius="4"
+                    Padding="5">
+                <TreeView x:Name="PacketTree" 
+                          ItemsSource="{Binding FilteredNodes, RelativeSource={RelativeSource AncestorType=local:PacketSelector}}"
+                          SelectedItemChanged="PacketTree_SelectedItemChanged"
+                          BorderThickness="0">
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                            <TextBlock Text="{Binding Name}" />
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                             <Setter Property="IsExpanded" Value="True"/>
+                             <EventSetter Event="MouseDoubleClick" Handler="TreeViewItem_MouseDoubleClick"/>
+                             <EventSetter Event="KeyDown" Handler="TreeViewItem_KeyDown"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                </TreeView>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>

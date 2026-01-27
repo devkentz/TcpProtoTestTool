@@ -4,7 +4,7 @@ using Google.Protobuf;
 namespace ProtoTestTool.ScriptContract
 {
     /// <summary>
-    /// Context for Reverse Proxy Mode interceptors.
+    /// Context for Proxy Mode interceptors.
     /// Allows inspection, modification, dropping, and bypassing of packets.
     /// </summary>
     public sealed class ProxyPacketContext
@@ -15,7 +15,7 @@ namespace ProtoTestTool.ScriptContract
         public Packet Packet { get; set; }
 
         /// <summary>
-        /// The direction of the packet flow (Inbound = Client->Server, Outbound = Server->Client).
+        /// The direction of the packet flow (Inbound = Server->Client, Outbound = Client->Server).
         /// </summary>
         public PacketDirection Direction { get; }
 

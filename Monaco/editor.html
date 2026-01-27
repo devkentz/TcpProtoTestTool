@@ -31,15 +31,60 @@
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
 
         let editor;
-
-        // Completion Items
-        let completionItems = [];
+        let currentFileName = '';
+        let completionResolve = null;
+        let signatureResolve = null;
 
         require(['vs/editor/editor.main'], function () {
-            // Register Provider
+            // Register Completion Provider (Roslyn-based)
             monaco.languages.registerCompletionItemProvider('csharp', {
-                provideCompletionItems: function (model, position) {
-                    return { suggestions: completionItems };
+                triggerCharacters: ['.', ' '],
+                provideCompletionItems: async function (model, position) {
+                    const offset = model.getOffsetAt(position);
+
+                    // Request completions from C#
+                    return new Promise((resolve) => {
+                        completionResolve = resolve;
+                        postMessage({
+                            type: 'requestCompletions',
+                            fileName: currentFileName,
+                            position: offset,
+                            content: model.getValue()
+                        });
+
+                        // Timeout fallback
+                        setTimeout(() => {
+                            if (completionResolve) {
+                                completionResolve({ suggestions: [] });
+                                completionResolve = null;
+                            }
+                        }, 2000);
+                    });
+                }
+            });
+
+            // Register Signature Help Provider
+            monaco.languages.registerSignatureHelpProvider('csharp', {
+                signatureHelpTriggerCharacters: ['(', ','],
+                provideSignatureHelp: async function (model, position) {
+                    const offset = model.getOffsetAt(position);
+
+                    return new Promise((resolve) => {
+                        signatureResolve = resolve;
+                        postMessage({
+                            type: 'requestSignatureHelp',
+                            fileName: currentFileName,
+                            position: offset,
+                            content: model.getValue()
+                        });
+
+                        setTimeout(() => {
+                            if (signatureResolve) {
+                                signatureResolve(null);
+                                signatureResolve = null;
+                            }
+                        }, 2000);
+                    });
                 }
             });
 
@@ -53,28 +98,100 @@
                 fontFamily: 'Consolas, "Courier New", monospace',
                 scrollBeyondLastLine: false,
                 renderWhitespace: "none",
-                contextmenu: true
+                contextmenu: true,
+                quickSuggestions: {
+                    other: true,
+                    comments: false,
+                    strings: false
+                },
+                suggestOnTriggerCharacters: true,
+                parameterHints: { enabled: true }
+            });
+
+            // Request diagnostics on content change (debounced)
+            let diagnosticTimeout = null;
+            editor.onDidChangeModelContent(() => {
+                if (diagnosticTimeout) clearTimeout(diagnosticTimeout);
+                diagnosticTimeout = setTimeout(() => {
+                    postMessage({
+                        type: 'requestDiagnostics',
+                        fileName: currentFileName,
+                        content: editor.getValue()
+                    });
+                }, 500);
             });
 
             // Notify C# that editor is ready
-            if (window.chrome && window.chrome.webview) {
-                window.chrome.webview.postMessage({ type: 'ready' });
-            }
+            postMessage({ type: 'ready' });
         });
 
-        // --- Interop Functions called from C# ---
-
-        function updateCompletions(json) {
-            try {
-                if (typeof json === 'string') {
-                    completionItems = JSON.parse(json);
-                } else {
-                    completionItems = json;
-                }
-            } catch (e) {
-                console.error("Failed to parse completions", e);
+        function postMessage(data) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage(data);
             }
         }
+
+        // --- Responses from C# ---
+
+        function setCompletions(items) {
+            if (completionResolve) {
+                const suggestions = items.map(item => ({
+                    label: item.label,
+                    kind: item.kind,
+                    insertText: item.insertText || item.label,
+                    detail: item.detail || '',
+                    filterText: item.filterText || item.label,
+                    range: undefined // Use default range
+                }));
+                completionResolve({ suggestions: suggestions });
+                completionResolve = null;
+            }
+        }
+
+        function setSignatureHelp(data) {
+            if (signatureResolve) {
+                if (data && data.label) {
+                    signatureResolve({
+                        value: {
+                            signatures: [{
+                                label: data.label,
+                                documentation: data.documentation || '',
+                                parameters: (data.parameters || []).map(p => ({
+                                    label: p.label,
+                                    documentation: p.documentation || ''
+                                }))
+                            }],
+                            activeSignature: 0,
+                            activeParameter: 0
+                        },
+                        dispose: () => {}
+                    });
+                } else {
+                    signatureResolve(null);
+                }
+                signatureResolve = null;
+            }
+        }
+
+        function setDiagnostics(diagnostics) {
+            if (!editor || !monaco) return;
+
+            const model = editor.getModel();
+            if (!model) return;
+
+            const markers = diagnostics.map(d => ({
+                startLineNumber: d.startLine,
+                startColumn: d.startColumn,
+                endLineNumber: d.endLine,
+                endColumn: d.endColumn,
+                message: d.message,
+                severity: d.severity // 8=Error, 4=Warning, 2=Info, 1=Hint
+            }));
+
+            monaco.editor.setModelMarkers(model, 'csharp', markers);
+        }
+
+        // --- Interop Functions called from C# ---
 
         function setContent(content) {
             if (editor) {
@@ -82,6 +199,10 @@
             } else {
                 setTimeout(() => setContent(content), 100);
             }
+        }
+
+        function setFileName(name) {
+            currentFileName = name;
         }
 
         function setLanguage(lang) {
@@ -107,6 +228,17 @@
             if (editor) {
                 editor.layout();
             }
+        }
+
+        function setMinimap(enabled) {
+            if (editor) {
+                editor.updateOptions({ minimap: { enabled: enabled } });
+            }
+        }
+
+        // Legacy support
+        function updateCompletions(json) {
+            // Not used with Roslyn provider, but kept for compatibility
         }
     </script>
 </body>

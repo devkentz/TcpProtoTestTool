@@ -10,6 +10,7 @@ public class PacketConvertor
 
 	public required Type Type { get; set; }
 	public required string Name { get; set; }
+	public string Category { get; set; } = "Uncategorized";
 	public string? JsonText { get; set; }
 
 	public (string name, string json) DefaultJsonString()

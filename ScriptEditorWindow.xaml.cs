@@ -1,25 +1,27 @@
 using System;
 using System.IO;
-using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
+using ProtoTestTool.Services;
 
 namespace ProtoTestTool
 {
-    public partial class ScriptEditorWindow : Wpf.Ui.Controls.UiWindow
+    public partial class ScriptEditorWindow : Wpf.Ui.Controls.FluentWindow
     {
         private readonly string _workspacePath;
+        private readonly string _workspaceRoot;
         private readonly ScriptLoader _scriptLoader;
-        
-        // Callback when compilation succeeds
-
+        private readonly System.Collections.Generic.Dictionary<string, string> _fileMapping = new();
+        private RoslynIntelliSenseService? _intelliSense;
 
         public ScriptEditorWindow(string workspacePath, ScriptLoader scriptLoader)
         {
             InitializeComponent();
-            _workspacePath = workspacePath;
+            _workspaceRoot = workspacePath;
+            _workspacePath = Path.Combine(workspacePath, "Scripts");
             _scriptLoader = scriptLoader;
 
             Loaded += ScriptEditorWindow_Loaded;
@@ -27,7 +29,31 @@ namespace ProtoTestTool
 
         private async void ScriptEditorWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            await InitializeIntelliSenseAsync();
             await InitializeEditorsAsync();
+        }
+
+        private async Task InitializeIntelliSenseAsync()
+        {
+            try
+            {
+                _intelliSense = new RoslynIntelliSenseService();
+
+                // Collect additional references from Libs folder
+                var additionalRefs = new System.Collections.Generic.List<string>();
+                var libsDir = Path.Combine(_workspacePath, "Libs");
+                if (Directory.Exists(libsDir))
+                {
+                    additionalRefs.AddRange(Directory.GetFiles(libsDir, "*.dll", SearchOption.AllDirectories));
+                }
+
+                await _intelliSense.InitializeAsync(_workspaceRoot, additionalRefs);
+                AppendLog("IntelliSense initialized.", Brushes.Green);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"IntelliSense init failed: {ex.Message}", Brushes.Orange);
+            }
         }
 
         private async Task InitializeEditorsAsync()
@@ -40,12 +66,18 @@ namespace ProtoTestTool
             }
             var editorUrl = new Uri(editorPath).AbsoluteUri;
 
+            // Resolve file paths (.cs only)
+            _fileMapping["Registry"] = "PacketRegistry.cs";
+            _fileMapping["Header"] = "PacketHeader.cs";
+            _fileMapping["Codec"] = "PacketCodec.cs";
+            _fileMapping["Interceptor"] = "PacketInterceptor.cs";
+
             // Initialize WebView2 for each tab
-            await InitializeWebView(RegistryEditor, editorUrl, "PacketRegistry.csx");
-            await InitializeWebView(HeaderEditor, editorUrl, "PacketHeader.csx");
-            await InitializeWebView(SerializerEditor, editorUrl, "PacketSerializer.csx");
-            await InitializeWebView(ContextEditor, editorUrl, "PacketHandler.csx");
-            
+            await InitializeWebView(RegistryEditor, editorUrl, _fileMapping["Registry"]);
+            await InitializeWebView(HeaderEditor, editorUrl, _fileMapping["Header"]);
+            await InitializeWebView(CodecEditor, editorUrl, _fileMapping["Codec"]);
+            await InitializeWebView(InterceptorEditor, editorUrl, _fileMapping["Interceptor"]);
+
             SetStatus("Ready");
         }
 
@@ -53,26 +85,17 @@ namespace ProtoTestTool
         {
             try
             {
-                // Handshake Mechanism
                 var tcs = new TaskCompletionSource<bool>();
-                
-                webView.WebMessageReceived += (s, e) =>
+
+                webView.WebMessageReceived += async (s, e) =>
                 {
                     try
                     {
-                        // Check JSON property directly for object messages
-                        var json = e.WebMessageAsJson;
-                        if (!string.IsNullOrEmpty(json))
+                        await HandleWebMessageAsync(webView, e.WebMessageAsJson, fileName);
+
+                        if (e.WebMessageAsJson.Contains("\"type\":\"ready\""))
                         {
-                             if (json.Contains("\"type\":\"ready\"") || json.Contains("\"ready\""))
-                             {
-                                 tcs.TrySetResult(true);
-                             }
-                             else
-                             {
-                                 // Log other messages (extensions/debug)
-                                 AppendLog($"[Editor JS] {json}", Brushes.Cyan);
-                             }
+                            tcs.TrySetResult(true);
                         }
                     }
                     catch (Exception ex)
@@ -83,17 +106,15 @@ namespace ProtoTestTool
 
                 webView.Source = new Uri(url);
 
-                // Wait for ready signal (timeout 3s)
                 var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(3000));
                 if (completedTask == tcs.Task)
                 {
-                     await LoadFileIntoEditor(webView, fileName);
+                    await LoadFileIntoEditor(webView, fileName);
                 }
                 else
                 {
-                     AppendLog($"[Editor] Timeout waiting for editor ready: {fileName}", Brushes.Orange);
-                     // Fallback try
-                     await LoadFileIntoEditor(webView, fileName);
+                    AppendLog($"[Editor] Timeout waiting for editor ready: {fileName}", Brushes.Orange);
+                    await LoadFileIntoEditor(webView, fileName);
                 }
             }
             catch (Exception ex)
@@ -102,59 +123,152 @@ namespace ProtoTestTool
             }
         }
 
+        private async Task HandleWebMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("type", out var typeProp))
+                    return;
+
+                var type = typeProp.GetString();
+                System.Diagnostics.Debug.WriteLine($"[WebMessage] Type: {type}, File: {fileName}");
+
+                switch (type)
+                {
+                    case "requestCompletions":
+                        await HandleCompletionRequestAsync(webView, root, fileName);
+                        break;
+
+                    case "requestSignatureHelp":
+                        await HandleSignatureHelpRequestAsync(webView, root, fileName);
+                        break;
+
+                    case "requestDiagnostics":
+                        await HandleDiagnosticsRequestAsync(webView, root, fileName);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WebMessage Error] {ex.Message}");
+            }
+        }
+
+        private async Task HandleCompletionRequestAsync(
+            Microsoft.Web.WebView2.Wpf.WebView2 webView,
+            JsonElement root,
+            string fileName)
+        {
+            if (_intelliSense == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[Completion] IntelliSense is null!");
+                return;
+            }
+
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+
+            System.Diagnostics.Debug.WriteLine($"[Completion] File: {fileName}, Position: {position}, ContentLen: {content.Length}");
+
+            // Update document in Roslyn workspace
+            _intelliSense.UpdateDocument(fileName, content);
+
+            // Get completions
+            var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
+
+            System.Diagnostics.Debug.WriteLine($"[Completion] Got {completions.Count} items");
+
+            // Send back to Monaco
+            var jsonResult = JsonSerializer.Serialize(completions);
+            await webView.ExecuteScriptAsync($"setCompletions({jsonResult})");
+        }
+
+        private async Task HandleSignatureHelpRequestAsync(
+            Microsoft.Web.WebView2.Wpf.WebView2 webView,
+            JsonElement root,
+            string fileName)
+        {
+            if (_intelliSense == null) return;
+
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+
+            _intelliSense.UpdateDocument(fileName, content);
+
+            var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
+
+            var jsonResult = signatureHelp != null
+                ? JsonSerializer.Serialize(signatureHelp)
+                : "null";
+            await webView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
+        }
+
+        private async Task HandleDiagnosticsRequestAsync(
+            Microsoft.Web.WebView2.Wpf.WebView2 webView,
+            JsonElement root,
+            string fileName)
+        {
+            if (_intelliSense == null) return;
+
+            var content = root.GetProperty("content").GetString() ?? "";
+
+            _intelliSense.UpdateDocument(fileName, content);
+
+            var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
+
+            var jsonResult = JsonSerializer.Serialize(diagnostics);
+            await webView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
+        }
+
         private async Task LoadFileIntoEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string fileName)
         {
             var path = Path.Combine(_workspacePath, fileName);
+
+            // Set file name for Monaco
+            var safeFileName = JsonSerializer.Serialize(fileName);
+            await webView.ExecuteScriptAsync($"setFileName({safeFileName})");
+
             if (File.Exists(path))
             {
                 var content = await File.ReadAllTextAsync(path);
-                // Escape for JS
-                var safeContent = System.Text.Json.JsonSerializer.Serialize(content);
+                var safeContent = JsonSerializer.Serialize(content);
                 await webView.ExecuteScriptAsync($"setContent({safeContent})");
+
+                // Initialize document in Roslyn
+                _intelliSense?.UpdateDocument(fileName, content);
             }
         }
 
         private void Tab_Checked(object sender, RoutedEventArgs e)
         {
-            if (RegistryEditor == null) return; // Not initialized yet
+            if (RegistryEditor == null) return;
 
             var button = sender as System.Windows.Controls.Primitives.ToggleButton;
             if (button == null || button.Tag == null) return;
 
             string targetName = button.Tag.ToString()!;
-            
-            // Hide all (Collapse/Hidden)
-            // Note: We use Hidden initially for loading, but switching to Collapsed/Visible logic here
-            // To ensure state is kept, we just show one.
-            // Wait, if we use Collapsed, does it un-initialize? 
-            // In Grid, Collapsed just removes from layout. It should be fine.
-            
+
             SetVisibility(RegistryEditor, targetName == "RegistryEditor");
             SetVisibility(HeaderEditor, targetName == "HeaderEditor");
-            SetVisibility(SerializerEditor, targetName == "SerializerEditor");
-            SetVisibility(ContextEditor, targetName == "ContextEditor");
+            SetVisibility(CodecEditor, targetName == "CodecEditor");
+            SetVisibility(InterceptorEditor, targetName == "InterceptorEditor");
         }
 
         private void SetVisibility(Microsoft.Web.WebView2.Wpf.WebView2 webView, bool isVisible)
         {
             if (webView == null) return;
-            // Use Visibility.Hidden to keep layout/rendering state or Collapsed?
-            // Collapsed removes it from layout space. Hidden keeps space.
-            // Since they are in the same Grid cell (overlapping), Hidden is fine if we want them to stack?
-            // No, Hidden takes space. Does Grid center them?
-            // They are in Grid Row 1. If Hidden, they take space.
-            // If Collapsed, they don't.
-            // Let's use Collapsed for the inactive ones.
             webView.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private async Task<string> GetEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
         {
-            try 
+            try
             {
                 var result = await webView.ExecuteScriptAsync("getContent()");
-                // Result is JSON encoded string, need to deserialize
-                return System.Text.Json.JsonSerializer.Deserialize<string>(result) ?? string.Empty;
+                return JsonSerializer.Deserialize<string>(result) ?? string.Empty;
             }
             catch (Exception ex)
             {
@@ -163,73 +277,116 @@ namespace ProtoTestTool
             }
         }
 
-        private async void CompileScriptBtn_Click(object sender, RoutedEventArgs e)
+        private async Task SaveAllFilesAsync()
         {
-            StatusText.Text = "Compiling...";
-            ScriptLogBox.Text = "";
-            CompileScriptBtn.IsEnabled = false;
+            var registryCode = await GetEditorContent(RegistryEditor);
+            var headerCode = await GetEditorContent(HeaderEditor);
+            var codecCode = await GetEditorContent(CodecEditor);
+            var interceptorCode = await GetEditorContent(InterceptorEditor);
 
+            if (string.IsNullOrWhiteSpace(registryCode) || string.IsNullOrWhiteSpace(headerCode) ||
+                string.IsNullOrWhiteSpace(codecCode) || string.IsNullOrWhiteSpace(interceptorCode))
+            {
+                AppendLog("Error: One or more editors are empty. Save Aborted.", Brushes.Red);
+                return;
+            }
+
+            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Registry"]), registryCode);
+            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Header"]), headerCode);
+            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Codec"]), codecCode);
+            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Interceptor"]), interceptorCode);
+
+            AppendLog("Files Saved.", Brushes.Gray);
+        }
+
+        private async void SaveBtn_Click(object sender, RoutedEventArgs e)
+        {
             try
             {
-                // 1. Get content from all editors asynchronously
-                var registryCode = await GetEditorContent(RegistryEditor);
-                var headerCode = await GetEditorContent(HeaderEditor);
-                var serializerCode = await GetEditorContent(SerializerEditor);
-                var handlerCode = await GetEditorContent(ContextEditor);
-
-                // Validation: Prevent overwriting with empty content if load failed
-                if (string.IsNullOrWhiteSpace(registryCode) || string.IsNullOrWhiteSpace(headerCode) || 
-                    string.IsNullOrWhiteSpace(serializerCode) || string.IsNullOrWhiteSpace(handlerCode))
-                {
-                    AppendLog("Error: One or more editors are empty. Aborting save to prevent data loss.", Brushes.Red);
-                    
-                    // Allow compilation of existing files? Or Stop?
-                    // Better to stop and ask user to reload/check.
-                    StatusText.Text = "Save Aborted";
-                    return; 
-                }
-
-                // 2. Save all files
-                await File.WriteAllTextAsync(Path.Combine(_workspacePath, "PacketRegistry.csx"), registryCode);
-                await File.WriteAllTextAsync(Path.Combine(_workspacePath, "PacketHeader.csx"), headerCode);
-                await File.WriteAllTextAsync(Path.Combine(_workspacePath, "PacketSerializer.csx"), serializerCode);
-                await File.WriteAllTextAsync(Path.Combine(_workspacePath, "PacketHandler.csx"), handlerCode);
-
-                AppendLog("Files Saved. Starting Compilation...", Brushes.Gray);
-
-                // 3. Request Compilation
-                OnRequestCompilation?.Invoke(); 
-
-                // 4. Update Completions (if successful, types will be in ScriptGlobals or ProtoLoaderManager)
-                // We'll give it a small delay or call this explicitly after compilation finishes in MainWindow
+                await SaveAllFilesAsync();
+                SetStatus("Saved");
             }
             catch (Exception ex)
             {
-                AppendLog($"Error: {ex.Message}", Brushes.Red);
+                AppendLog($"Save Error: {ex.Message}", Brushes.Red);
+            }
+        }
+
+        private async void ReloadBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (MessageBox.Show("Discard changes and reload from disk?", "Reload", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                await InitializeEditorsAsync();
+                AppendLog("Reloaded from disk.", Brushes.DeepSkyBlue);
+            }
+        }
+
+        private async void BuildBtn_Click(object sender, RoutedEventArgs e)
+        {
+            StatusText.Text = "Building...";
+            ScriptLogBox.Document.Blocks.Clear();
+            BuildBtn.IsEnabled = false;
+
+            try
+            {
+                await SaveAllFilesAsync();
+                AppendLog("Requesting Compilation...", Brushes.Gray);
+
+                OnRequestCompilation?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Build Error: {ex.Message}", Brushes.Red);
                 StatusText.Text = "Error";
             }
             finally
             {
-                CompileScriptBtn.IsEnabled = true;
+                BuildBtn.IsEnabled = true;
             }
         }
 
-        public async Task UpdateCompletionsAsync(string json)
+        private void PackagesBtn_Click(object sender, RoutedEventArgs e)
         {
-             await RegistryEditor.ExecuteScriptAsync($"updateCompletions({json})");
-             await HeaderEditor.ExecuteScriptAsync($"updateCompletions({json})");
-             await SerializerEditor.ExecuteScriptAsync($"updateCompletions({json})");
-             await ContextEditor.ExecuteScriptAsync($"updateCompletions({json})");
+            if (string.IsNullOrEmpty(_workspacePath)) return;
+
+            var window = new NuGetWindow(_workspacePath);
+            window.Owner = this;
+            window.ShowDialog();
         }
-        
+
+        public Task UpdateCompletionsAsync(string json)
+        {
+            // Legacy - now handled by Roslyn IntelliSense
+            // Keep for compatibility if needed
+            return Task.CompletedTask;
+        }
+
+        public async Task RefreshIntelliSenseAsync()
+        {
+            // Reinitialize IntelliSense (e.g., after Proto recompilation)
+            await InitializeIntelliSenseAsync();
+        }
+
         public event Action? OnRequestCompilation;
 
         public void AppendLog(string message, Brush color)
         {
-            ScriptLogBox.Text += $"\n[{DateTime.Now:HH:mm:ss}] {message}";
-            ScriptLogBox.ScrollToEnd();
+            Dispatcher.Invoke(() =>
+            {
+                var paragraph = new System.Windows.Documents.Paragraph();
+                var run = new System.Windows.Documents.Run($"[{DateTime.Now:HH:mm:ss}] {message}") 
+                { 
+                    Foreground = color 
+                };
+                paragraph.Inlines.Add(run);
+                ScriptLogBox.Document.Blocks.Add(paragraph);
+                ScriptLogBox.ScrollToEnd();
+            });
         }
-        
-        public void SetStatus(string status) => StatusText.Text = status;
+
+        public void SetStatus(string status)
+        {
+            Dispatcher.Invoke(() => StatusText.Text = status);
+        }
     }
 }

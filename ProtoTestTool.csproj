@@ -9,23 +9,27 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Dotnet.Script.Core" />
-    <PackageReference Include="Dotnet.Script.DependencyModel" />
-    <PackageReference Include="Dotnet.Script.DependencyModel.Nuget" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" />
-    <PackageReference Include="Google.Protobuf" />
-    <PackageReference Include="Microsoft.Data.Sqlite" />
-    <PackageReference Include="NetCoreServer" />
-    <PackageReference Include="Newtonsoft.Json" />
-    <PackageReference Include="Microsoft.Extensions.Logging" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="Dotnet.Script.Core" Version="1.6.0" />
+    <PackageReference Include="Dotnet.Script.DependencyModel" Version="1.6.0" />
+    <PackageReference Include="Dotnet.Script.DependencyModel.Nuget" Version="1.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.11.0" />
+    <PackageReference Include="Google.Protobuf" Version="3.28.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="NetCoreServer" Version="8.0.6" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
     
-    <PackageReference Include="Microsoft.CodeAnalysis.Common" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Features" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Features" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.11.0" />
     <!-- RoslynPad Removed -->
-    <PackageReference Include="Microsoft.Web.WebView2" />
-    <PackageReference Include="WPF-UI" />
-    <PackageReference Include="Grpc.Tools" VersionOverride="2.60.0" PrivateAssets="All" GeneratePathProperty="true" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2849.39" />
+    <PackageReference Include="WPF-UI" Version="3.0.5" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0" PrivateAssets="All" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,4 +47,10 @@
     <Copy SourceFiles="@(ProtocIncludes)" DestinationFolder="$(OutDir)\Tools\google\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
+  <Target Name="CopyProtocToRoot" AfterTargets="Build">
+    <PropertyGroup>
+      <ProtocPath>$(PkgGrpc_Tools)/tools/windows_x64/protoc.exe</ProtocPath>
+    </PropertyGroup>
+    <Copy SourceFiles="$(ProtocPath)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

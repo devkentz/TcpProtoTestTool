@@ -4,10 +4,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Linq;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace ProtoTestTool
 {
-    public partial class WorkspaceDialog : Wpf.Ui.Controls.UiWindow
+    public partial class WorkspaceDialog : Wpf.Ui.Controls.FluentWindow
     {
         public string? SelectedPath { get; private set; }
         private GlobalSettings _settings;
@@ -79,8 +80,30 @@ namespace ProtoTestTool
 
             if (dialog.ShowDialog() == true)
             {
-                SelectWorkspace(dialog.FolderName);
+                var path = dialog.FolderName;
+                if (!Directory.Exists(path) || Directory.GetFileSystemEntries(path).Length == 0)
+                {
+                     _ = InitializeAndSelectAsync(path);
+                }
+                else
+                {
+                    SelectWorkspace(path);
+                }
             }
+        }
+
+        private async Task InitializeAndSelectAsync(string path)
+        {
+             try
+             {
+                 var scaffolder = new Services.ScaffoldingService();
+                 await scaffolder.InitializeWorkspaceAsync(path);
+                 SelectWorkspace(path);
+             }
+             catch (Exception ex)
+             {
+                 FluentMessageBox.ShowError($"Failed to initialize workspace: {ex.Message}");
+             }
         }
 
         private void OpenBtn_Click(object sender, RoutedEventArgs e)
