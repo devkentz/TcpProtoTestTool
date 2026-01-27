@@ -98,17 +98,6 @@ namespace ProtoTestTool.Network
                 var name = type.Name;
                 var convertor = new PacketConvertor {Name = name, Type = type};
                 
-                // Extract Category from Descriptor
-                try 
-                {
-                    var descriptorProp = type.GetProperty("Descriptor", BindingFlags.Public | BindingFlags.Static);
-                    if (descriptorProp?.GetValue(null) is MessageDescriptor descriptor)
-                    {
-                        convertor.Category = descriptor.File.Package;
-                    }
-                }
-                catch {}
-
                 allPacketsDict[name] = convertor;
 
                 if (name.EndsWith("Req"))
@@ -201,25 +190,12 @@ namespace ProtoTestTool.Network
             var newPackets = new Dictionary<string, PacketConvertor>(PacketsByMsgId ?? FrozenDictionary<string, PacketConvertor>.Empty);
             newPackets[name] = convertor;
             PacketsByMsgId = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
-
+            
             if (name.EndsWith("Req"))
             {
                 var newSend = new Dictionary<string, PacketConvertor>(SendPackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
                 newSend[name] = convertor;
                 SendPackets = newSend.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
-                
-                // Update Mapping
-                 var baseName = name[..^3];
-                 var responseName = baseName + "Res";
-                 var newMap = new Dictionary<string, string>(RequestToResponse ?? FrozenDictionary<string, string>.Empty);
-                 newMap[name] = responseName;
-                 RequestToResponse = newMap.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
-            }
-            else if (name.EndsWith("Res") || name.EndsWith("Notify") || name.EndsWith("NotifyMsg"))
-            {
-                var newRecv = new Dictionary<string, PacketConvertor>(ReceivePackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
-                newRecv[name] = convertor;
-                ReceivePackets = newRecv.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             }
         }
 

@@ -1,50 +1,176 @@
 # ProtoTestTool
 
-A scriptable, lightweight packet testing tool for TCP protocols using Protobuf.
-This tool allows you to define packet serialization and deserialization logic in C# scripts (`.csx`), removing the need to recompile the tool when protocols change.
+Protobuf 기반 TCP 패킷 테스트 도구. 클라이언트 모드와 프록시 모드를 지원하며, C# 스크립트를 통해 패킷 코덱/인터셉터를 런타임에 정의하고 핫 리로드할 수 있습니다.
 
-## Features
-- **Zero Project Dependencies**: Does not reference `NetworkClient` or `Protocol` projects directly.
-- **Dynamic Scripting**: Logic is loaded from `.csx` files at runtime.
-- **WPF UI**: Simple interface to connect, send, and view packets.
+---
 
-## Getting Started
+## 주요 기능
 
-1. **Build the Tool**:
-   Open the solution and build `ProtoTestTool`.
+### Test Client 모드
+- TCP 서버에 직접 연결하여 Protobuf 패킷 송수신
+- Monaco Editor 기반 JSON 편집기로 Request Body / Header 작성
+- Response Inspector에서 수신 패킷의 Body와 Header 확인
+- 패킷 검색 및 선택 UI
 
-2. **Prepare the Script**:
-   The `PacketHandler.csx` file is the entry point.
-   **Crucial**: You must update the `dllPaths` array in `PacketHandler.csx` to point to your actual compiled Protocol DLLs.
+### Proxy 모드
+- 로컬 포트에서 리슨하고 업스트림 서버로 포워딩하는 리버스 프록시
+- Outbound (Client -> Server) / Inbound (Server -> Client) 양방향 인터셉터
+- 패킷 수정, 드롭, 바이패스(재직렬화 생략) 지원
+- `System.Threading.Channels` 기반 비동기 파이프라인으로 패킷 순서 보장
 
-   ```csharp
-   var dllPaths = new[]
-   {
-       @"C:\Work\MyProject\Protocol\bin\Debug\net9.0\Protocol.dll",
-       // ... other dlls
-   };
-   ```
+### 스크립트 시스템
+- Roslyn 기반 C# 런타임 컴파일
+- `UnloadableAssemblyContext`를 이용한 핫 리로드 (앱 재시작 불필요)
+- Monaco Editor 기반 스크립트 편집기 (IntelliSense 지원)
+- NuGet 패키지 검색 및 설치 (`Scripts/Libs/`에 자동 배치, 컴파일 시 자동 참조)
 
-3. **Run**:
-   - Start `ProtoTestTool.exe`.
-   - Click **Load Script** (default path is `PacketHandler.csx`).
-   - If loaded successfully, the "Available Packets" list will populate.
-   - Enter IP/Port and click **Connect**.
-   - Select a packet, edit the JSON payload, and click **Send**.
+---
 
-## Script Contract
+## 기술 스택
 
-Your script must return an object implementing `IScriptContext`.
+| 기술 | 용도 |
+|------|------|
+| .NET 9.0 / WPF | UI 프레임워크 |
+| WPF-UI (Fluent) | Fluent Design 컨트롤 |
+| WebView2 + Monaco Editor | 코드/JSON 편집기 |
+| Roslyn | C# 스크립트 컴파일 |
+| Google.Protobuf | 메시지 직렬화 |
+| NetCoreServer | TCP 서버/클라이언트 |
+| gRPC Tools (protoc) | .proto -> .cs 컴파일 |
+| SQLite | 스크립트 상태 영속 저장 |
+
+---
+
+## 워크스페이스 구조
+
+```
+MyWorkspace/
+├── workspace_config.json       # 연결 설정 (IP, 포트, 프록시 설정)
+├── Protos/                     # .proto 소스 파일
+│   └── Generated/              # protoc이 생성한 .cs 파일
+├── Scripts/                    # C# 스크립트 소스
+│   ├── PacketCodec.cs          # IPacketCodec 구현
+│   ├── PacketRegistry.cs       # IPacketRegistry 구현
+│   ├── PacketInterceptor.cs    # IProxyPacketInterceptor 구현
+│   ├── PacketHeader.cs         # IHeader 구현
+│   ├── Libs/                   # NuGet 패키지 DLL
+│   └── Script.dll              # 컴파일 결과 (자동 생성)
+└── client_cache.db             # SQLite 상태 저장소
+```
+
+워크스페이스 선택 시 Mutex로 동일 워크스페이스의 다중 인스턴스 실행을 방지합니다.
+
+---
+
+## 스크립트 인터페이스
+
+### IPacketCodec
+
+TCP 바이트 스트림과 패킷 객체 간 변환을 담당합니다.
 
 ```csharp
-public interface IScriptContext
+public interface IPacketCodec
 {
-    IPacketSerializer Serializer { get; }
-    IPacketRegistry Registry { get; }
-    void Initialize();
+    int TryDecode(ref ReadOnlySpan<byte> buffer, out Packet? message);
+    ReadOnlyMemory<byte> Encode(Packet packet);
 }
 ```
 
-See `ScriptContract` folder for details.
+### IPacketRegistry
 
+패킷 ID와 메시지 타입 간 매핑을 정의합니다.
+
+```csharp
+public interface IPacketRegistry
+{
+    void Register(int id, Type type);
+    Type? GetMessageType(int id);
+    int GetMessageId(Type type);
+}
+```
+
+### IProxyPacketInterceptor
+
+프록시 모드에서 패킷을 가로채 처리합니다.
+
+```csharp
+public interface IProxyPacketInterceptor
+{
+    ValueTask OnOutboundAsync(ProxyPacketContext context);  // Client -> Server
+    ValueTask OnInboundAsync(ProxyPacketContext context);   // Server -> Client
+}
+```
+
+`ProxyPacketContext`를 통해 패킷 수정(`context.Packet`), 드롭(`context.Drop = true`), 바이패스(`context.Bypass = true`)가 가능합니다.
+
+### IHeader
+
+패킷 헤더의 직렬화를 정의합니다.
+
+```csharp
+public interface IHeader
+{
+    string ToJsonString();
+}
+```
+
+### ScriptGlobals (정적 API)
+
+스크립트에서 전역으로 접근할 수 있는 API입니다.
+
+| API | 설명 |
+|-----|------|
+| `ScriptGlobals.State` | 인메모리 + SQLite 상태 저장소 |
+| `ScriptGlobals.Log` | UI 로그 출력 |
+| `ScriptGlobals.Client` | 클라이언트 모드 API (Send, Delay) |
+| `ScriptGlobals.Proxy` | 프록시 모드 API |
+| `ScriptGlobals.Registry` | 패킷 레지스트리 |
+| `ScriptGlobals.Codec` | 패킷 코덱 |
+
+---
+
+## 빌드 및 실행
+
+```bash
+dotnet build
+dotnet run
+```
+
+### Publish
+
+```bash
+dotnet publish -c Release
+```
+
+`protoc.exe`와 Google proto includes가 publish 출력에 자동 포함됩니다.
+
+---
+
+## 프록시 패킷 처리 흐름
+
+```
+Client
+  │
+  ▼
+ProxyServer (로컬 포트)
+  │
+  ▼
+ProxySession
+  ├─ Outbound Channel ──→ ByteBuffer ──→ Codec.TryDecode()
+  │                                         │
+  │                                    ProxyPacketContext
+  │                                         │
+  │                              Pipeline.RunOutboundAsync()
+  │                                         │
+  │                                  Codec.Encode() ──→ Upstream Server
+  │
+  └─ Inbound Channel  ◀── UpstreamClient
+                              │
+                         ByteBuffer ──→ Codec.TryDecode()
+                                           │
+                                      ProxyPacketContext
+                                           │
+                                Pipeline.RunInboundAsync()
+                                           │
+                                    Codec.Encode() ──→ Client
 ```

@@ -1,13 +1,8 @@
 using System.IO;
 using System.Reflection;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 using System.Collections.ObjectModel;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Text;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
 using ProtoTestTool.Services;
@@ -256,6 +251,7 @@ namespace ProtoTestTool
                 }
 
                 RefreshPacketList();
+                await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
 
                 // Update Intellisense
                 if (true) 

@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using NetCoreServer;
 using ProtoTestTool.ScriptContract;
 
@@ -10,7 +12,13 @@ namespace ProtoTestTool.Network
         private readonly ProxyInterceptorPipeline _pipeline;
         private readonly IPacketCodec _codec;
 
-        public ProxySession(TcpServer server, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline, IPacketCodec codec) 
+        private readonly Channel<ReadOnlyMemory<byte>> _outboundChannel =
+            Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
+
+        private readonly Channel<ReadOnlyMemory<byte>> _inboundChannel =
+            Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
+
+        public ProxySession(TcpServer server, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline, IPacketCodec codec)
             : base(server)
         {
             _pipeline = pipeline;
@@ -20,118 +28,148 @@ namespace ProtoTestTool.Network
 
         protected override void OnConnected()
         {
-            // Connect to upstream server when client connects
             _upstream.ConnectAsync();
+            _ = ConsumeLoopAsync(_outboundChannel, PacketDirection.Outbound);
+            _ = ConsumeLoopAsync(_inboundChannel, PacketDirection.Inbound);
         }
 
         protected override void OnDisconnected()
         {
+            _outboundChannel.Writer.TryComplete();
+            _inboundChannel.Writer.TryComplete();
             _upstream.DisconnectAsync();
         }
 
-        // Buffer for incoming data
-        private readonly List<byte> _clientBuffer = new();
-        private readonly List<byte> _serverBuffer = new();
-
         protected override void OnReceived(byte[] buffer, long offset, long size)
         {
-            // Client -> Proxy -> Server (Outbound)
-            // Add to buffer
-            lock (_clientBuffer)
-            {
-                for (long i = 0; i < size; i++)
-                    _clientBuffer.Add(buffer[offset + i]);
-            }
-            _ = ProcessTrafficAsync(_clientBuffer, PacketDirection.Outbound);
+            var copy = buffer.AsSpan((int)offset, (int)size).ToArray();
+            _outboundChannel.Writer.TryWrite(copy);
         }
 
-        // Called by UpstreamClient
         public void OnUpstreamReceived(byte[] buffer, long offset, long size)
         {
-            // Server -> Proxy -> Client (Inbound)
-            lock (_serverBuffer)
-            {
-                for (long i = 0; i < size; i++)
-                    _serverBuffer.Add(buffer[offset + i]);
-            }
-            _ = ProcessTrafficAsync(_serverBuffer, PacketDirection.Inbound);
+            var copy = buffer.AsSpan((int)offset, (int)size).ToArray();
+            _inboundChannel.Writer.TryWrite(copy);
         }
 
-        private async Task ProcessTrafficAsync(List<byte> bufferList, PacketDirection direction)
+        private async Task ConsumeLoopAsync(Channel<ReadOnlyMemory<byte>> channel, PacketDirection direction)
         {
+            var accumulator = new ByteBuffer();
+
             try
             {
-                // Loop to consume all complete packets
-                while (true)
+                await foreach (var chunk in channel.Reader.ReadAllAsync())
                 {
-                    // Create ReadOnlySequence from current buffer window
-                    // Note: This is inefficient (List -> Array -> ROS) but functional for prototype.
-                    // Optimization: Use a circular buffer or Memory<byte> manager.
-                    byte[] currentBytes;
-                    lock (bufferList)
+                    accumulator.Append(chunk.Span);
+
+                    while (accumulator.Length > 0)
                     {
-                        if (bufferList.Count == 0) return;
-                        currentBytes = bufferList.ToArray();
-                    }
+                        var span = accumulator.WrittenSpan;
+                        var consumed = _codec.TryDecode(ref span, out var message);
+                        if (consumed <= 0)
+                            break;
 
-                    ReadOnlySpan<byte> inputSpan = currentBytes.AsSpan();
-                    
-                    // Decode attempt
-                    // We must pass a copy of logic reference to track consumption
-                    var currentSeq = inputSpan;
+                        var rawMemory = new ReadOnlyMemory<byte>(accumulator.WrittenSpan[..consumed].ToArray());
+                        accumulator.Consume(consumed);
 
-                    var consumed = _codec.TryDecode(ref currentSeq, out var message);
-                    if(consumed > 0)
-                    {
-                        // Calculate consumed amount
-                        
-                        // Extract RAW bytes for the packet (from the original array)
-                        var rawMemory = new ReadOnlyMemory<byte>(currentBytes, 0, (int)consumed);
-
-                        // Remove consumed from List
-                        lock (bufferList)
-                        {
-                            bufferList.RemoveRange(0, (int)consumed);
-                        }
-                        
-                        // Process the packet
                         var context = new ProxyPacketContext(message!, direction, rawMemory);
-                        
+
                         if (direction == PacketDirection.Inbound)
                             await _pipeline.RunInboundAsync(context);
                         else
                             await _pipeline.RunOutboundAsync(context);
 
-                        if (context.Drop) continue;
+                        if (context.Drop)
+                            continue;
 
-                        // Forward
-                        byte[] dataToSend;
-                        if (context.Bypass && context.Raw.Length > 0)
-                        {
-                            dataToSend = context.Raw.ToArray();
-                        }
-                        else
-                        {
-                            var mem = _codec.Encode(context.Packet);
-                            dataToSend = mem.ToArray();
-                        }
+                        var dataToSend = context.Bypass && context.Raw.Length > 0
+                            ? context.Raw
+                            : _codec.Encode(context.Packet);
 
                         if (direction == PacketDirection.Outbound)
-                            _upstream.SendAsync(dataToSend);
+                            _upstream.SendAsync(GetArray(dataToSend));
                         else
-                            SendAsync(dataToSend);
-                    }
-                    else
-                    {
-                        // Incomplete packet, wait for more data
-                        break; 
+                            SendAsync(GetArray(dataToSend));
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ProxySession] Error: {ex.Message}");
+                Console.WriteLine($"[ProxySession] Error ({direction}): {ex.Message}");
                 Disconnect();
+            }
+        }
+
+        private static byte[] GetArray(ReadOnlyMemory<byte> memory)
+        {
+            return MemoryMarshal.TryGetArray(memory, out var segment)
+                   && segment.Offset == 0
+                   && segment.Count == segment.Array!.Length
+                ? segment.Array
+                : memory.ToArray();
+        }
+
+        /// <summary>
+        /// Contiguous byte accumulator with compaction.
+        /// Replaces List&lt;byte&gt; to avoid per-element Add and O(n) RemoveRange.
+        /// </summary>
+        private sealed class ByteBuffer
+        {
+            private byte[] _buffer = new byte[4096];
+            private int _start;
+            private int _end;
+
+            public int Length => _end - _start;
+
+            public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(_start, Length);
+
+            public void Append(ReadOnlySpan<byte> data)
+            {
+                EnsureCapacity(data.Length);
+                data.CopyTo(_buffer.AsSpan(_end));
+                _end += data.Length;
+            }
+
+            public void Consume(int count)
+            {
+                _start += count;
+
+                if (_start == _end)
+                {
+                    _start = 0;
+                    _end = 0;
+                }
+                else if (_start > _buffer.Length / 2)
+                {
+                    Compact();
+                }
+            }
+
+            private void EnsureCapacity(int additionalBytes)
+            {
+                if (_buffer.Length - _end >= additionalBytes)
+                    return;
+
+                if (_buffer.Length - Length >= additionalBytes)
+                {
+                    Compact();
+                    return;
+                }
+
+                var newSize = Math.Max(_buffer.Length * 2, Length + additionalBytes);
+                var newBuf = new byte[newSize];
+                System.Buffer.BlockCopy(_buffer, _start, newBuf, 0, Length);
+                _end = Length;
+                _start = 0;
+                _buffer = newBuf;
+            }
+
+            private void Compact()
+            {
+                var len = Length;
+                System.Buffer.BlockCopy(_buffer, _start, _buffer, 0, len);
+                _start = 0;
+                _end = len;
             }
         }
     }

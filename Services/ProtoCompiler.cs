@@ -100,7 +100,7 @@ namespace ProtoTestTool.Services
                 CreateNoWindow = true
             };
 
-            using var proc = Process.Start(psi);
+            using var proc = Process.Start(psi)!;
             proc.WaitForExit();
             
             if (proc.ExitCode != 0)

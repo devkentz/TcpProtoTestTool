@@ -38,19 +38,16 @@
     </None>
   </ItemGroup>
 
-  <Target Name="CopyProtoc" AfterTargets="Build">
+  <Target Name="CopyProtoc" AfterTargets="Build;Publish">
     <ItemGroup>
       <ProtocTools Include="$(PkgGrpc_Tools)\tools\windows_x64\protoc.exe" />
       <ProtocIncludes Include="$(PkgGrpc_Tools)\tools\google\**\*" />
     </ItemGroup>
+    <Copy SourceFiles="@(ProtocTools)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ProtocTools)" DestinationFolder="$(OutDir)\Tools" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(ProtocIncludes)" DestinationFolder="$(OutDir)\Tools\google\%(RecursiveDir)" SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyProtocToRoot" AfterTargets="Build">
-    <PropertyGroup>
-      <ProtocPath>$(PkgGrpc_Tools)/tools/windows_x64/protoc.exe</ProtocPath>
-    </PropertyGroup>
-    <Copy SourceFiles="$(ProtocPath)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ProtocTools)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(ProtocTools)" DestinationFolder="$(PublishDir)\Tools" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(ProtocIncludes)" DestinationFolder="$(PublishDir)\Tools\google\%(RecursiveDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
   </Target>
 </Project>

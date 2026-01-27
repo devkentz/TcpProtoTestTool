@@ -71,17 +71,9 @@ namespace ProtoTestTool.Controls
             var packets = ProtoLoaderManager.Instance.GetSendPackets();
             _allNodes.Clear();
 
-            // Group by Category
-            var grouped = packets.GroupBy(p => p.Category ?? "Uncategorized").OrderBy(g => g.Key);
-
-            foreach (var group in grouped)
+            foreach (var packet in packets.OrderBy(p => p.Name))
             {
-                var groupNode = new PacketNode { Name = group.Key };
-                foreach (var packet in group.OrderBy(p => p.Name))
-                {
-                    groupNode.Children.Add(new PacketNode { Name = packet.Name, Packet = packet });
-                }
-                _allNodes.Add(groupNode);
+                _allNodes.Add(new PacketNode { Name = packet.Name, Packet = packet });
             }
 
             Filter("");
@@ -104,27 +96,11 @@ namespace ProtoTestTool.Controls
 
             var search = searchText.ToLower();
 
-            foreach (var group in _allNodes)
+            foreach (var node in _allNodes)
             {
-                // Check if group matches
-                bool groupMatches = group.Name.ToLower().Contains(search);
-                
-                // Check children
-                var matchingChildren = group.Children.Where(c => c.Name.ToLower().Contains(search)).ToList();
-
-                if (groupMatches || matchingChildren.Any())
+                if (node.Name.ToLower().Contains(search))
                 {
-                    var newNode = new PacketNode { Name = group.Name };
-                    if (groupMatches)
-                    {
-                        // Add all children
-                        foreach (var child in group.Children) newNode.Children.Add(child);
-                    }
-                    else
-                    {
-                        foreach (var child in matchingChildren) newNode.Children.Add(child);
-                    }
-                    _filteredNodes.Add(newNode);
+                    _filteredNodes.Add(node);
                 }
             }
         }
@@ -193,7 +169,7 @@ namespace ProtoTestTool.Controls
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null)
+        protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }

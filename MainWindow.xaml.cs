@@ -199,9 +199,18 @@ namespace ProtoTestTool
 
             if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
             {
+                var app = (App)Application.Current;
+                if (!app.TryAcquireWorkspaceLock(dialog.SelectedPath))
+                {
+                    MessageBox.Show(
+                        "이미 다른 ProtoTestTool에서 사용 중인 워크스페이스입니다.",
+                        "워크스페이스 잠금",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
                 _workspacePath = dialog.SelectedPath;
-                // Save workspace to Global Settings is done inside Dialog.SelectWorkspace
-                // But we still persist specific settings if needed:
                 SaveWorkspaceSettings();
 
                 // Clear previous proto/script state
@@ -318,6 +327,10 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 Dispatcher.Invoke(() => AppendLog($"[Error] Workspace load failed: {ex.Message}", Brushes.Red));
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
             }
         }
 
