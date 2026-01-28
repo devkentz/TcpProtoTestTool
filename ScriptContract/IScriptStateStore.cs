@@ -22,6 +22,13 @@ namespace ProtoTestTool.ScriptContract
         bool TryGet<T>(string key, out T value);
 
         /// <summary>
+        /// Atomically updates a value. If the key exists, updateFactory receives the current value.
+        /// If the key does not exist, addValue is used.
+        /// Thread-safe for concurrent inbound/outbound access.
+        /// </summary>
+        T AddOrUpdate<T>(string key, T addValue, Func<string, T, T> updateFactory);
+
+        /// <summary>
         /// Persists the current in-memory state to the local SQLite database.
         /// Call this only when necessary (e.g. end of test case).
         /// </summary>

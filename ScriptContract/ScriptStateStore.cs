@@ -128,6 +128,18 @@ namespace ProtoTestTool.ScriptContract
             _memoryStore[key] = value;
         }
 
+        public T AddOrUpdate<T>(string key, T addValue, Func<string, T, T> updateFactory)
+        {
+            var result = _memoryStore.AddOrUpdate(
+                key,
+                addValue,
+                (k, existing) => existing is T typed
+                    ? updateFactory(k, typed)
+                    : addValue);
+
+            return (T)result!;
+        }
+
         public void Clear()
         {
             _memoryStore.Clear();
