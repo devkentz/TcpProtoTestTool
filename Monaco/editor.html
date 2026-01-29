@@ -25,6 +25,12 @@
 <body>
     <div id="container"></div>
 
+    <script>
+        window.addEventListener('resize', () => {
+            if (window.editor) window.editor.layout();
+        });
+    </script>
+
     <!-- Load Monaco Editor from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <script>
@@ -164,7 +170,7 @@
                             activeSignature: 0,
                             activeParameter: 0
                         },
-                        dispose: () => {}
+                        dispose: () => { }
                     });
                 } else {
                     signatureResolve(null);
@@ -233,6 +239,12 @@
         function setMinimap(enabled) {
             if (editor) {
                 editor.updateOptions({ minimap: { enabled: enabled } });
+            }
+        }
+
+        function setReadOnly(readOnly) {
+            if (editor) {
+                editor.updateOptions({ readOnly: readOnly });
             }
         }
 

@@ -118,15 +118,14 @@
             <!-- VIEW 1: Test Client -->
             <Grid x:Name="ClientView">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/> <!-- Connection -->
-                    <RowDefinition Height="Auto"/> <!-- Pipeline -->
-                    <RowDefinition Height="*"/>    <!-- Inspector/Stream -->
-                    <RowDefinition Height="Auto"/>  <!-- Splitter -->
-                    <RowDefinition Height="150" MinHeight="100"/>  <!-- Logs -->
+                    <RowDefinition Height="Auto"/> <!-- Connection (Shared) -->
+                    <RowDefinition Height="*"/>    <!-- Tabs -->
+                    <RowDefinition Height="Auto"/> <!-- Splitter -->
+                    <RowDefinition Height="150" MinHeight="100"/>  <!-- Logs (Shared) -->
                 </Grid.RowDefinitions>
 
                 <!-- Connection Panel -->
-                <ui:Card Padding="15" Margin="0,0,0,15" VerticalAlignment="Stretch">
+                <ui:Card Grid.Row="0" Padding="15" Margin="0,0,0,15" VerticalAlignment="Stretch">
                      <DockPanel>
                          <TextBlock Text="Connection" FontWeight="Bold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="0,0,20,0"/>
                          
@@ -151,91 +150,158 @@
                      </DockPanel>
                 </ui:Card>
 
-                <!-- Packet Selection & Action -->
-                <ui:Card Grid.Row="1" Padding="15" Margin="0,0,0,15">
-                     <Grid>
-                         <Grid.ColumnDefinitions>
-                             <ColumnDefinition Width="*"/>
-                             <ColumnDefinition Width="Auto"/>
-                         </Grid.ColumnDefinitions>
-                         
-                         <!-- Left: Selector and Info -->
-                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                             <TextBlock Text="Select Packet Type:" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" FontSize="13"/>
-                             <DockPanel>
-                                 <controls:PacketSelector x:Name="PacketSelectorControl" MinWidth="300" Width="400" Height="35" HorizontalAlignment="Left" PacketSelected="PacketSelectorControl_PacketSelected"/>
+                <!-- Tabs -->
+                <TabControl Grid.Row="1">
+                    <TabItem Header="Manual Send">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/> <!-- Pipeline -->
+                                <RowDefinition Height="*"/>    <!-- Inspector -->
+                            </Grid.RowDefinitions>
+
+                            <!-- Packet Selection & Action -->
+                            <ui:Card Grid.Row="0" Padding="15" Margin="0,0,0,15">
+                                 <Grid>
+                                     <Grid.ColumnDefinitions>
+                                         <ColumnDefinition Width="*"/>
+                                         <ColumnDefinition Width="Auto"/>
+                                     </Grid.ColumnDefinitions>
+                                     
+                                     <!-- Left: Selector and Info -->
+                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                         <TextBlock Text="Select Packet Type:" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" FontSize="13"/>
+                                         <DockPanel>
+                                             <controls:PacketSelector x:Name="PacketSelectorControl" MinWidth="300" Width="400" Height="35" HorizontalAlignment="Left" PacketSelected="PacketSelectorControl_PacketSelected"/>
+                                             
+                                             <!-- Pipeline Hint -->
+                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0,0,0">
+                                                  <ui:SymbolIcon Symbol="DataLine24" FontSize="16" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,8,0"/>
+                                                  <TextBlock Text="Pipeline: Message → Interceptor → Headers → Serialize" Foreground="{DynamicResource TextFillColorTertiaryBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                             </StackPanel>
+                                         </DockPanel>
+                                     </StackPanel>
+
+                                     <!-- Right: Send Button -->
+                                     <ui:Button x:Name="SendBtn" Grid.Column="1" Content="Send Packet" Width="140" Height="40" Click="SendBtn_Click" IsEnabled="False" Appearance="Primary" Icon="Send24" VerticalAlignment="Bottom"/>
+                                 </Grid>
+                            </ui:Card>
+
+                            <!-- Inspector -->
+                            <Grid Grid.Row="1">
+                                 <Grid.ColumnDefinitions>
+                                     <ColumnDefinition Width="*"/>
+                                     <ColumnDefinition Width="10"/>
+                                     <ColumnDefinition Width="*"/>
+                                 </Grid.ColumnDefinitions>
                                  
-                                 <!-- Pipeline Hint -->
-                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0,0,0">
-                                      <ui:SymbolIcon Symbol="DataLine24" FontSize="16" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Margin="0,0,8,0"/>
-                                      <TextBlock Text="Pipeline: Message → Interceptor → Headers → Serialize" Foreground="{DynamicResource TextFillColorTertiaryBrush}" FontSize="12" VerticalAlignment="Center"/>
-                                 </StackPanel>
-                             </DockPanel>
-                         </StackPanel>
+                                <!-- Request Inspector -->
+                                <ui:Card Grid.Column="0" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="Request Inspector" Margin="15,10" FontWeight="Bold"/>
+                                        <TabControl Grid.Row="1" Margin="5">
+                                            <TabItem Header="Body (JSON)">
+                                                <wv2:WebView2 x:Name="JsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                            </TabItem>
+                                            <TabItem Header="Header (JSON)">
+                                                <wv2:WebView2 x:Name="HeaderJsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                            </TabItem>
+                                        </TabControl>
+                                    </Grid>
+                                </ui:Card>
 
-                         <!-- Right: Send Button -->
-                         <ui:Button x:Name="SendBtn" Grid.Column="1" Content="Send Packet" Width="140" Height="40" Click="SendBtn_Click" IsEnabled="False" Appearance="Primary" Icon="Send24" VerticalAlignment="Bottom"/>
-                     </Grid>
-                </ui:Card>
+                                <!-- Response Inspector -->
+                                <ui:Card Grid.Column="2" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="Response Inspector" Margin="15,10" FontWeight="Bold"/>
+                                        <TabControl Grid.Row="1" Margin="5">
+                                            <TabItem Header="Body (JSON)">
+                                                <wv2:WebView2 x:Name="ResponseBoxView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                            </TabItem>
+                                            <TabItem Header="Headers">
+                                                <DataGrid x:Name="ResponseHeaderGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0" Background="Transparent">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="Key" Binding="{Binding Key}" Width="*"/>
+                                                        <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*"/>
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </TabItem>
+                                        </TabControl>
+                                    </Grid>
+                                </ui:Card>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                    
+                    <!-- Replay Tab -->
+                    <TabItem Header="Replay">
+                        <Grid Margin="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            
+                            <!-- Replay Controls -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <ui:Button Content="Load Recording" Icon="FolderOpen24" Click="LoadRecordingBtn_Click"/>
+                                <TextBlock x:Name="ReplayFileNameText" Text="No file loaded" VerticalAlignment="Center" Margin="10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <ui:Button Content="Replay All" Icon="Play24" Appearance="Primary" Margin="20,0,0,0" Click="ReplayAllBtn_Click"/>
+                            </StackPanel>
 
-                <!-- Split: Inspector and Logs -->
-                  <!-- Split: Inspector and Logs -->
-                 <Grid Grid.Row="2">
-                      <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="*"/>
-                          <ColumnDefinition Width="10"/>
-                          <ColumnDefinition Width="*"/>
-                      </Grid.ColumnDefinitions>
-                      
-                     <!-- Request Inspector -->
-                     <ui:Card Grid.Column="0" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
-                         <Grid>
-                             <Grid.RowDefinitions>
-                                 <RowDefinition Height="Auto"/>
-                                 <RowDefinition Height="*"/>
-                             </Grid.RowDefinitions>
-                             <TextBlock Text="Request Inspector" Margin="15,10" FontWeight="Bold"/>
-                             <TabControl Grid.Row="1" Margin="5">
-                                 <TabItem Header="Body (JSON)">
-                                     <wv2:WebView2 x:Name="JsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
-                                 </TabItem>
-                                 <TabItem Header="Header (JSON)">
-                                     <wv2:WebView2 x:Name="HeaderJsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
-                                 </TabItem>
-                             </TabControl>
-                         </Grid>
-                     </ui:Card>
+                            <!-- Content Split -->
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="300"/>
+                                    <ColumnDefinition Width="5"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
 
-                     <!-- Response Inspector -->
-                     <ui:Card Grid.Column="2" VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
-                         <Grid>
-                             <Grid.RowDefinitions>
-                                 <RowDefinition Height="Auto"/>
-                                 <RowDefinition Height="*"/>
-                             </Grid.RowDefinitions>
-                             <TextBlock Text="Response Inspector" Margin="15,10" FontWeight="Bold"/>
-                             <TabControl Grid.Row="1" Margin="5">
-                                 <TabItem Header="Body (JSON)">
-                                     <wv2:WebView2 x:Name="ResponseBoxView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
-                                 </TabItem>
-                                 <TabItem Header="Headers">
-                                     <DataGrid x:Name="ResponseHeaderGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0" Background="Transparent">
-                                         <DataGrid.Columns>
-                                             <DataGridTextColumn Header="Key" Binding="{Binding Key}" Width="*"/>
-                                             <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*"/>
-                                         </DataGrid.Columns>
-                                     </DataGrid>
-                                 </TabItem>
-                             </TabControl>
-                         </Grid>
-                     </ui:Card>
-                </Grid>
+                                <!-- Packet List -->
+                                <DataGrid x:Name="ReplayPacketGrid" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="1" BorderBrush="#333333" SelectionChanged="ReplayPacketGrid_SelectionChanged">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="100"/>
+                                        <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="80"/>
+                                        <DataGridTextColumn Header="Packet" Binding="{Binding PacketName}" Width="*"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent" ShowsPreview="True"/>
+                                
+                                <!-- Content Viewer -->
+                                <ui:Card Grid.Column="2"  VerticalAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="0">
+                                     <Grid>
+                                         <Grid.RowDefinitions>
+                                             <RowDefinition Height="Auto"/>
+                                             <RowDefinition Height="*"/>
+                                         </Grid.RowDefinitions>
+                                         <TextBlock Text="Packet Inspector" Margin="10,5" FontWeight="Bold" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                         <TabControl Grid.Row="1" Margin="5">
+                                             <TabItem Header="Body (JSON)">
+                                                 <wv2:WebView2 x:Name="ReplayBodyJsonViewer" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                             </TabItem>
+                                             <TabItem Header="Header (JSON)">
+                                                 <wv2:WebView2 x:Name="ReplayHeaderJsonViewer" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                             </TabItem>
+                                         </TabControl>                                         
+                                     </Grid>
+                                </ui:Card>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
 
                 <!-- Splitter -->
-                <GridSplitter Grid.Row="3" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="Transparent" ShowsPreview="True"/>
+                <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="Transparent" ShowsPreview="True"/>
 
                 <!-- System Logs -->
-                <ui:Card Grid.Row="4" Margin="0,5,0,0" Padding="0">
+                <ui:Card Grid.Row="3" Margin="0,5,0,0" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -289,7 +355,7 @@
                           <ColumnDefinition Width="200"/>
                           <ColumnDefinition Width="*"/>
                       </Grid.ColumnDefinitions>
-                      <ui:Card Grid.Column="0" VerticalAlignment="Stretch" Padding="0">
+                      <ui:Card Grid.Column="0" VerticalAlignment="Stretch"  VerticalContentAlignment="Stretch" Padding="0">
                           <Grid>
                               <Grid.RowDefinitions>
                                   <RowDefinition Height="Auto"/>
@@ -300,7 +366,7 @@
                           </Grid>
                       </ui:Card>
                       
-                      <ui:Card Grid.Column="1" VerticalAlignment="Stretch" Padding="0" Margin="10,0,0,0">
+                      <ui:Card Grid.Column="1" VerticalAlignment="Stretch" Padding="0" VerticalContentAlignment="Stretch" Margin="10,0,0,0">
                           <Grid>
                               <Grid.RowDefinitions>
                                   <RowDefinition Height="Auto"/>

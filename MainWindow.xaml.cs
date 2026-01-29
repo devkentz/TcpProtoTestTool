@@ -11,11 +11,16 @@ using ProtoTestTool.ScriptContract;
 using System.Collections.ObjectModel;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
-using System.Windows.Controls;
 
+using System.Windows.Controls;
+using Microsoft.Win32; // For OpenFileDialog
+
+
+using System.Text.Encodings.Web;
 
 namespace ProtoTestTool
 {
+
     public partial class MainWindow
     {
         private SimpleTcpClient? _client;
@@ -28,6 +33,10 @@ namespace ProtoTestTool
 
         // Editor State
         private string _currentEditingFile = "";
+        
+        // Replay State
+        private List<RecordedPacket> _loadedPackets = new();
+        private string _monacoUri = "";
 
         // Workspace
         private string _workspacePath = "";
@@ -48,13 +57,31 @@ namespace ProtoTestTool
         private ObservableCollection<KeyValueItem> _requestHeaders = new ObservableCollection<KeyValueItem>(); // Kept for compilation safety until removed
         private ObservableCollection<KeyValueItem> _responseHeaders = new ObservableCollection<KeyValueItem>();
 
+        // Services
+        private readonly IReplayService _replayService = new ReplayService();
+
         public MainWindow(string workspacePath) : this()
         {
             _workspacePath = workspacePath;
-            // Override loaded settings if path validates
             InitializeWorkspaceFiles(_workspacePath);
-            LoadWorkspaceConfiguration(_workspacePath);
-            UpdateWorkspaceUI();
+            InitializeMonacoEditors();
+
+            Title = $"ProtoTestTool - {_workspacePath}";
+
+            string settingsPath = Path.Combine(_workspacePath, "settings.json");
+            if (File.Exists(settingsPath))
+            {
+                LoadWorkspaceSettings();
+            }
+            
+            // Re-compile logic
+            Dispatcher.InvokeAsync(async () => 
+            {
+                 // Small delay to ensure UI ready
+                 await Task.Delay(500);
+                 await LoadProtosFromFolderAsync(_workspacePath);
+                 await CompileWorkspaceScriptsAsync();
+            });
         }
 
         public MainWindow()
@@ -133,41 +160,77 @@ namespace ProtoTestTool
             var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
             if (!File.Exists(editorPath))
             {
+
                 MessageBox.Show($"Editor file not found: {editorPath}");
                 return;
             }
 
-            var uri = new Uri(editorPath).AbsoluteUri;
+            _monacoUri = new Uri(editorPath).AbsoluteUri;
 
-            await InitializeSingleEditor(JsonEditorView, uri, "json", enableMinimap: false);
-            await InitializeSingleEditor(HeaderJsonEditorView, uri, "json", enableMinimap: false);
-            await InitializeSingleEditor(ResponseBoxView, uri, "json");
+            await InitializeSingleEditor(JsonEditorView, _monacoUri, "json", enableMinimap: false, isReadOnly: false);
+            await InitializeSingleEditor(HeaderJsonEditorView, _monacoUri, "json", enableMinimap: false, isReadOnly: false);
+            await InitializeSingleEditor(ResponseBoxView, _monacoUri, "json", isReadOnly: true);
+
+            // Hook up Loaded events for Replay viewers (TabControl lifecycle management)
+            ReplayBodyJsonViewer.Loaded += async (s, e) => 
+            {
+                if (ReplayBodyJsonViewer.CoreWebView2 == null)
+                    await InitializeSingleEditor(ReplayBodyJsonViewer, _monacoUri, "json", isReadOnly: true);
+            };
+            ReplayHeaderJsonViewer.Loaded += async (s, e) => 
+            {
+                if (ReplayHeaderJsonViewer.CoreWebView2 == null)
+                    await InitializeSingleEditor(ReplayHeaderJsonViewer, _monacoUri, "json", isReadOnly: true);
+            };
         }
 
-        private async Task InitializeSingleEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string uri, string language, bool enableMinimap = true)
+        private async Task InitializeSingleEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string uri, string language, bool enableMinimap = true, bool isReadOnly = false)
         {
             await webView.EnsureCoreWebView2Async();
             webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             webView.CoreWebView2.Settings.IsScriptEnabled = true;
+
+            var tcs = new TaskCompletionSource<bool>();
+            
+            // Handler for Web Messages (Ready signal)
+            EventHandler<Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs>? msgHandler = null;
+            msgHandler = (s, e) =>
+            {
+                try
+                {
+                     // Debug: AppendLog($"WebMsg: {e.WebMessageAsJson}", Brushes.Gray);
+                     var json = e.WebMessageAsJson;
+                     if (!string.IsNullOrEmpty(json) && (json.Contains("\"type\":\"ready\"") || json.Contains("'type':'ready'") || json.Contains("\"ready\"")))
+                     {
+                         tcs.TrySetResult(true);
+                     }
+                }
+                catch {}
+            };
+
+            webView.CoreWebView2.WebMessageReceived += msgHandler;
+
             webView.CoreWebView2.Navigate(uri);
 
-            // Wait for ready (in a real scenario we might wait for the message, 
-            // but for now a small delay + initial setup script is okay)
-            webView.CoreWebView2.WebMessageReceived += (s, args) =>
-            {
-                // dynamic msg = JsonConvert.DeserializeObject(args.TryGetWebMessageAsString());
-                // if (msg.type == "ready") { ... }
-            };
+            // Wait for Ready (Timeout 3s)
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(3000));
+            
+            webView.CoreWebView2.WebMessageReceived -= msgHandler;
 
-            webView.NavigationCompleted += async (s, e) =>
+            if (completedTask == tcs.Task && tcs.Task.Result)
             {
-                if (e.IsSuccess)
-                {
-                    await webView.ExecuteScriptAsync($"setLanguage('{language}');");
-                    await webView.ExecuteScriptAsync($"setMinimap({enableMinimap.ToString().ToLower()});");
-                    await webView.ExecuteScriptAsync("setTheme('vs-dark');");
-                }
-            };
+                // Init Settings
+                await webView.ExecuteScriptAsync($"setLanguage('{language}');");
+                await webView.ExecuteScriptAsync($"setMinimap({enableMinimap.ToString().ToLower()});");
+                await webView.ExecuteScriptAsync("setTheme('vs-dark');");
+                await webView.ExecuteScriptAsync($"setReadOnly({isReadOnly.ToString().ToLower()});");
+                AppendLog("Viewer Ready", Brushes.Green);
+            }
+            else
+            {
+                AppendLog("Viewer Init Timeout", Brushes.Orange);
+                await webView.ExecuteScriptAsync("if(typeof layout === 'function') layout();");
+            }
         }
 
         private async Task SetEditorContentAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string content)
@@ -778,6 +841,34 @@ namespace ProtoTestTool
                     return;
                 }
 
+                await SendPacketPipelineAsync(message, headerObj);
+            }
+            catch (Exception ex)
+            {
+                FluentMessageBox.ShowError($"전송 오류: {ex.Message}");
+                AppendLog($"[Error] {ex.Message}", Brushes.Red);
+            }
+        }
+
+        private async Task SendPacketPipelineAsync(IMessage message, IHeader headerObj)
+        {
+            try
+            {
+                if (_client == null || !_client.IsConnected)
+                {
+                    AppendLog("Cannot send: Disconnected", Brushes.Red);
+                    return;
+                }
+
+                // Client Interceptor Hook
+                if (_clientInterceptor != null)
+                {
+                    var ctx = new ClientPacketContext(message);
+                    
+                    _clientInterceptor.OnBeforeSend(ctx);
+                    message = ctx.Message;
+                }
+
                 var packet = new Packet(headerObj, message);
 
                 // Encode & Send
@@ -788,13 +879,12 @@ namespace ProtoTestTool
 
                 if (PacketRecorder.Client.IsRecording)
                 {
-                    PacketRecorder.Client.Record(PacketDirection.Outbound, packet, message);
+                    PacketRecorder.Client.Record(PacketDirection.Outbound, packet);
                 }
             }
             catch (Exception ex)
             {
-                FluentMessageBox.ShowError($"전송 오류: {ex.Message}");
-                AppendLog($"[Error] {ex.Message}", Brushes.Red);
+                AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
             }
         }
 
@@ -859,7 +949,7 @@ namespace ProtoTestTool
                     {
                         if (PacketRecorder.Client.IsRecording && packet != null)
                         {
-                            PacketRecorder.Client.Record(PacketDirection.Inbound, packet, packet.Message);
+                            PacketRecorder.Client.Record(PacketDirection.Inbound, packet);
                         }
 
                         _receiveBuffer.RemoveRange(0, (int) readSize);
@@ -951,6 +1041,210 @@ namespace ProtoTestTool
                 _scriptEditorWindow.Activate();
                 if (_scriptEditorWindow.WindowState == WindowState.Minimized)
                     _scriptEditorWindow.WindowState = WindowState.Normal;
+            }
+        }
+        private void LoadRecordingBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = "JSONP Files (*.jsonp)|*.jsonp|All Files (*.*)|*.*",
+                InitialDirectory = Path.Combine(_workspacePath, "Recordings")
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    var json = File.ReadAllText(dialog.FileName);
+                    var packets = System.Text.Json.JsonSerializer.Deserialize<List<RecordedPacket>>(json);
+                    
+                    if (packets != null)
+                    {
+                        _loadedPackets = packets;
+                        ReplayPacketGrid.ItemsSource = _loadedPackets;
+                        ReplayFileNameText.Text = Path.GetFileName(dialog.FileName);
+                        AppendLog($"Loaded {packets.Count} packets from {Path.GetFileName(dialog.FileName)}", Brushes.Green);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to load recording: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private async void ReplayAllBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_loadedPackets == null || _loadedPackets.Count == 0)
+            {
+                MessageBox.Show("No packets loaded.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (_client == null || !_client.IsConnected)
+            {
+                MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            int count = 0;
+            foreach (var record in _loadedPackets)
+            {
+                // Only replay Outbound packets
+                if (record.Direction != "Outbound") continue;
+
+                try
+                {
+                    // 1. Resolve Type using ProtoLoaderManager (checks all loaded Protos)
+                    // We match by Descriptor.FullName to ensure correct proto mapping
+                    var packetConvertor = ProtoLoaderManager.Instance.PacketsByMsgId.Values
+                        .FirstOrDefault(p => 
+                        {
+                            var desc = p.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
+                            return desc != null && desc.FullName == record.PacketName;
+                        });
+
+                    if (packetConvertor?.Type == null)
+                    {
+                        AppendLog($"[Replay Skip] Unknown Type: {record.PacketName}", Brushes.Yellow);
+                        continue;
+                    }
+                    
+                    var msgDescriptor = packetConvertor.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
+
+                    if (msgDescriptor == null)
+                    {
+                         AppendLog($"[Replay Skip] Descriptor not found for: {record.PacketName}", Brushes.Yellow);
+                         continue;
+                    }
+
+                    // 2. Deserialize Payload
+                    var payloadJson = System.Text.Json.JsonSerializer.Serialize(record.Payload);
+                    var parser = new JsonParser(JsonParser.Settings.Default);
+                    var message = parser.Parse(payloadJson, msgDescriptor);
+
+                    // 3. Resolve Header
+                    // Header is likely defined in the ScriptAssembly (e.g. PacketHeader : IHeader)
+                    Type? headerType = null;
+                    if (_scriptAssembly != null)
+                    {
+                        headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                        if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
+                    }
+
+                    IHeader? headerObj = null;
+                    if (headerType != null && record.Header != null)
+                    {
+                        var headerJson = System.Text.Json.JsonSerializer.Serialize(record.Header);
+                        headerObj = (IHeader?)JsonConvert.DeserializeObject(headerJson, headerType);
+                    }
+
+                    if (headerObj == null)
+                    {
+                        // Fallback: If no header recorded or resolution failed, try to create default?
+                        // For now, strict check.
+                        AppendLog($"[Replay Skip] Header missing/invalid for {record.PacketName}", Brushes.Red);
+                        continue;
+                    }
+
+                    // 4. Send via Pipeline
+                    await SendPacketPipelineAsync(message, headerObj);
+                    count++;
+                    
+                    await Task.Delay(10); 
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"[Replay Error] {record.PacketName}: {ex.Message}", Brushes.Red);
+                }
+            }
+
+
+            AppendLog($"Replay Finished. Sent {count} packets.", Brushes.Green);
+        }
+
+        private async void ReplayPacketGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // PROBE: Verify Event Firing
+            // MessageBox.Show($"Selection Changed! Index: {ReplayPacketGrid.SelectedIndex}");
+
+            if (_loadedPackets == null) return;
+
+            // Check if Viewer is ready (Initialized via Loaded event)
+            if (ReplayBodyJsonViewer.CoreWebView2 == null)
+            {
+                 // Allow some time for Loaded event to fire if it's the first time being shown
+                 await Task.Delay(200); 
+                 if (ReplayBodyJsonViewer.CoreWebView2 == null) return;
+            }
+
+            if (ReplayPacketGrid.SelectedIndex >= 0 && ReplayPacketGrid.SelectedIndex < _loadedPackets.Count)
+            {
+                var packet = _loadedPackets[ReplayPacketGrid.SelectedIndex];
+
+                // 1. Display Full Packet Details (Body Tab)
+                if (packet != null)
+                {
+                    try 
+                    {
+                        // Use System.Text.Json to correctly handle JsonElement
+                        var options = new System.Text.Json.JsonSerializerOptions 
+                        { 
+                            WriteIndented = true,
+                            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                        };
+                        var content = System.Text.Json.JsonSerializer.Serialize(packet, options);
+                        
+                        await SetEditorContentAsync(ReplayBodyJsonViewer, content);
+                        await Task.Delay(50);
+                        await ReplayBodyJsonViewer.ExecuteScriptAsync("if(typeof layout === 'function') layout();");
+                    }
+                    catch (Exception ex)
+                    {
+                         await SetEditorContentAsync(ReplayBodyJsonViewer, $"// Error: {ex.Message}");
+                    }
+                }
+                else
+                {
+                     await SetEditorContentAsync(ReplayBodyJsonViewer, "");
+                }
+
+                // 2. Display Header
+                if (packet?.Header != null)
+                {
+                    try
+                    {
+                        var headerJson = System.Text.Json.JsonSerializer.Serialize(packet.Header, new System.Text.Json.JsonSerializerOptions 
+                        { 
+                            WriteIndented = true,
+                            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                        });
+                        await SetEditorContentAsync(ReplayHeaderJsonViewer, headerJson);
+                    }
+                    catch
+                    {
+                        await SetEditorContentAsync(ReplayHeaderJsonViewer, "// Error displaying header");
+                    }
+                }
+                else
+                {
+                     await SetEditorContentAsync(ReplayHeaderJsonViewer, "");
+                }
+            }
+        }
+
+        private async Task EnsureReplayViewerInitialized(Microsoft.Web.WebView2.Wpf.WebView2 webView)
+        {
+            if (webView.CoreWebView2 == null && !string.IsNullOrEmpty(_monacoUri))
+            {
+                try 
+                {
+                    await InitializeSingleEditor(webView, _monacoUri, "json", isReadOnly: true);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"[Viewer Init Error] {ex.Message}", Brushes.Red);
+                }
             }
         }
     }

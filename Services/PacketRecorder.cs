@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Google.Protobuf;
 using ProtoTestTool.ScriptContract;
+using System.Text.Encodings.Web;
 
 namespace ProtoTestTool.Services
 {
@@ -68,6 +69,7 @@ namespace ProtoTestTool.Services
                 var options = new JsonSerializerOptions 
                 { 
                     WriteIndented = true,
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 };
                 var json = JsonSerializer.Serialize(list, options);
@@ -81,7 +83,7 @@ namespace ProtoTestTool.Services
             }
         }
 
-        public void Record(PacketDirection direction, Packet packet, IMessage message)
+        public void Record(PacketDirection direction, Packet packet)
         {
             if (!_isRecording) return;
 
@@ -89,7 +91,7 @@ namespace ProtoTestTool.Services
             {
                 // Format Payload as JSON
                 var formatter = new JsonFormatter(JsonFormatter.Settings.Default);
-                var jsonString = formatter.Format(message);
+                var jsonString = formatter.Format(packet.Message);
                 
                 var payloadObj = JsonSerializer.Deserialize<object>(jsonString);
 
@@ -97,8 +99,8 @@ namespace ProtoTestTool.Services
                 {
                     Time = DateTime.Now.ToString("HH:mm:ss.fff"),
                     Direction = direction.ToString(),
-                    PacketName = message.Descriptor.FullName, // Changed to FullName for type resolution
-                    Header = packet?.Header,
+                    PacketName = packet.Message.Descriptor.FullName, // Changed to FullName for type resolution
+                    Header = packet.Header,
                     Payload = payloadObj
                 };
 

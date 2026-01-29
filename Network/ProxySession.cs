@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using NetCoreServer;
@@ -66,18 +67,20 @@ namespace ProtoTestTool.Network
                     while (accumulator.Length > 0)
                     {
                         var span = accumulator.WrittenSpan;
-                        var consumed = _codec.TryDecode(ref span, out var message);
+                        var consumed = _codec.TryDecode(ref span, out var packet);
                         if (consumed <= 0)
                             break;
+                        
+                        Debug.Assert(packet != null);
 
                         var rawMemory = new ReadOnlyMemory<byte>(accumulator.WrittenSpan[..consumed].ToArray());
                         accumulator.Consume(consumed);
 
-                        var context = new ProxyPacketContext(message!, direction, rawMemory);
+                        var context = new ProxyPacketContext(packet, direction, rawMemory);
 
                         if (PacketRecorder.Proxy.IsRecording)
                         {
-                            PacketRecorder.Proxy.Record(direction, message!, message!.Message);
+                            PacketRecorder.Proxy.Record(direction, packet);
                         }
 
                         if (direction == PacketDirection.Inbound)
