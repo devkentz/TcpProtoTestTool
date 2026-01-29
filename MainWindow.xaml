@@ -46,6 +46,9 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
                         <ui:Button x:Name="WorkspaceBtn" Icon="Folder24" Content="Workspace" Click="WorkspaceBtn_Click" Margin="0,0,15,0" Appearance="Secondary"/>
                         <TextBlock x:Name="WorkspacePathText" Text="" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,15,0" MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+                        
+
+
                         <ui:SymbolIcon Symbol="Flash24" Foreground="{DynamicResource SystemFillColorSuccessBrush}" FontSize="16" ToolTip="Hot Reload Active"/>
                     </StackPanel>
                 </Grid>
@@ -135,6 +138,14 @@
                          <ui:Button x:Name="ConnectToggleBtn" Content="Connect" Click="ConnectToggleBtn_Click" Width="120" Margin="10,0" Appearance="Primary" Icon="PlugConnected24"/>
                          
                          <ui:Button Content="Script Editor" Click="OpenScriptEditor_Click" Margin="20,0,0,0" Width="120" Icon="Code24"/>
+
+                         <!-- Client Record Button -->
+                         <ToggleButton x:Name="ClientRecordBtn" Click="ClientRecordBtn_Click" Margin="20,0,0,0" Width="100" Foreground="#FF5555" FontWeight="Bold">
+                             <StackPanel Orientation="Horizontal">
+                                 <ui:SymbolIcon Symbol="Record24" Margin="0,0,8,0"/>
+                                 <TextBlock Text="REC"/>
+                             </StackPanel>
+                         </ToggleButton>
 
                          <TextBlock x:Name="ConnectionStatusText" Text="Ready" DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="{StaticResource StatusReadyBrush}" FontWeight="Bold"/>
                      </DockPanel>
@@ -261,6 +272,14 @@
                              <ui:TextBox x:Name="ProxyTargetPortBox" Text="9001" Width="80"/>
                              <ui:Button x:Name="ProxyStartBtn" Content="Start Proxy" Margin="20,0,0,0" Click="ProxyStartBtn_Click" Appearance="Primary"/>
                              <ui:Button Content="Script Editor" Click="OpenScriptEditor_Click" Margin="20,0,0,0" Width="120" Icon="Code24"/>
+                             
+                             <!-- Proxy Record Button -->
+                             <ToggleButton x:Name="ProxyRecordBtn" Click="ProxyRecordBtn_Click" Margin="20,0,0,0" Width="100" Foreground="#FF5555" FontWeight="Bold">
+                                 <StackPanel Orientation="Horizontal">
+                                     <ui:SymbolIcon Symbol="Record24" Margin="0,0,8,0"/>
+                                     <TextBlock Text="REC"/>
+                                 </StackPanel>
+                             </ToggleButton>
                          </StackPanel>
                      </StackPanel>
                  </ui:Card>

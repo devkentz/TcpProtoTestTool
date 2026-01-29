@@ -53,7 +53,7 @@ namespace ProtoTestTool
 
         public void Delay(int milliseconds)
         {
-            System.Threading.Thread.Sleep(milliseconds);
+            Thread.Sleep(milliseconds);
         }
     }
 

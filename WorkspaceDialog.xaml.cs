@@ -17,10 +17,14 @@ namespace ProtoTestTool
         {
             public string Name { get; set; } = "";
             public string Path { get; set; } = "";
+            public bool IsCurrent { get; set; }
         }
+
+        private readonly string? _currentWorkspacePath;
 
         public WorkspaceDialog(string? initialPath)
         {
+            _currentWorkspacePath = initialPath;
             InitializeComponent();
             _settings = GlobalSettings.Load();
             LoadRecentList();
@@ -42,11 +46,12 @@ namespace ProtoTestTool
         private void LoadRecentList()
         {
             var items = _settings.RecentWorkspaces
-                .Where(Directory.Exists) // Filter out missing folders
-                .Select(p => new RecentItem 
-                { 
-                    Name = new DirectoryInfo(p).Name, 
-                    Path = p 
+                .Where(Directory.Exists)
+                .Select(p => new RecentItem
+                {
+                    Name = new DirectoryInfo(p).Name,
+                    Path = p,
+                    IsCurrent = string.Equals(p, _currentWorkspacePath, StringComparison.OrdinalIgnoreCase)
                 })
                 .ToList();
 
@@ -133,6 +138,45 @@ namespace ProtoTestTool
             {
                 SelectWorkspace(item.Path);
             }
+        }
+
+        private void DeleteItemBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement element || element.Tag is not string path)
+                return;
+
+            var result = FluentMessageBox.ShowConfirm(
+                "Remove Workspace",
+                $"Do you also want to delete the workspace folder from disk?\n\n{path}\n\n" +
+                "Yes = Remove from list AND delete from disk\n" +
+                "No = Remove from list only");
+
+            if (result == MessageBoxResult.Cancel)
+                return;
+
+            _settings.RemoveRecent(path);
+
+            if (result == MessageBoxResult.Yes && Directory.Exists(path))
+            {
+                try
+                {
+                    Directory.Delete(path, true);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    FluentMessageBox.ShowError($"Access denied. Try running as Administrator or check folder permissions.\n\n{path}");
+                }
+                catch (IOException ex)
+                {
+                    FluentMessageBox.ShowError($"Cannot delete folder. It may be in use by another process.\n\n{ex.Message}");
+                }
+                catch (Exception ex)
+                {
+                    FluentMessageBox.ShowError($"Failed to delete folder: {ex.Message}");
+                }
+            }
+
+            LoadRecentList();
         }
 
         private void ExitBtn_Click(object sender, RoutedEventArgs e)

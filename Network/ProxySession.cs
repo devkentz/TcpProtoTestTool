@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using NetCoreServer;
 using ProtoTestTool.ScriptContract;
+using ProtoTestTool.Services;
 
 namespace ProtoTestTool.Network
 {
@@ -73,6 +74,11 @@ namespace ProtoTestTool.Network
                         accumulator.Consume(consumed);
 
                         var context = new ProxyPacketContext(message!, direction, rawMemory);
+
+                        if (PacketRecorder.Proxy.IsRecording)
+                        {
+                            PacketRecorder.Proxy.Record(direction, message!, message!.Message);
+                        }
 
                         if (direction == PacketDirection.Inbound)
                             await _pipeline.RunInboundAsync(context);

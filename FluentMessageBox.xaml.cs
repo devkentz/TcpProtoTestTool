@@ -28,5 +28,16 @@ namespace ProtoTestTool
         {
             Show("Error", message);
         }
+
+        /// <summary>
+        /// Shows a Fluent-styled confirmation dialog with Yes/No/Cancel.
+        /// Returns MessageBoxResult.Yes, No, or Cancel.
+        /// </summary>
+        public static System.Windows.MessageBoxResult ShowConfirm(string title, string message)
+        {
+            var dialog = new FluentConfirmDialog(title, message);
+            dialog.ShowDialog();
+            return dialog.Result;
+        }
     }
 }

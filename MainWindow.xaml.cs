@@ -1,4 +1,7 @@
+using ProtoTestTool.Services;
 using System.Windows;
+
+
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.IO;
@@ -465,6 +468,57 @@ namespace ProtoTestTool
 
         #region Network Connection
 
+
+        private void ClientRecordBtn_Click(object sender, RoutedEventArgs e)
+        {
+            HandleRecordClick(ClientRecordBtn, PacketRecorder.Client);
+        }
+
+        private void ProxyRecordBtn_Click(object sender, RoutedEventArgs e)
+        {
+            HandleRecordClick(ProxyRecordBtn, PacketRecorder.Proxy);
+        }
+
+        private void HandleRecordClick(System.Windows.Controls.Primitives.ToggleButton btn, PacketRecorder recorder)
+        {
+            var recorderName = recorder == PacketRecorder.Client ? "Client" : "Proxy";
+
+            // Helper to update text inside StackPanel
+            void UpdateButtonText(string text)
+            {
+                if (btn.Content is StackPanel stack && stack.Children.Count > 1 && stack.Children[1] is TextBlock tb)
+                {
+                    tb.Text = text;
+                }
+                else
+                {
+                    // Fallback if structure changes
+                    btn.Content = text; 
+                }
+            }
+
+            if (btn.IsChecked == true)
+            {
+                if (string.IsNullOrEmpty(_workspacePath))
+                {
+                    MessageBox.Show("Workspace required to record.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    btn.IsChecked = false;
+                    return;
+                }
+                recorder.Start(_workspacePath);
+                UpdateButtonText("STOP");
+                btn.Foreground = Brushes.Red;
+                AppendLog($"[{recorderName}] Started recording.", Brushes.Red);
+            }
+            else
+            {
+                recorder.Stop();
+                UpdateButtonText("REC");
+                btn.Foreground = new SolidColorBrush(Color.FromRgb(255, 85, 85)); 
+                AppendLog($"[{recorderName}] Stopped recording.", Brushes.Gray);
+            }
+        }
+
         private void ConnectToggleBtn_Click(object sender, RoutedEventArgs e)
         {
             if (_client != null && _client.IsConnected)
@@ -731,6 +785,11 @@ namespace ProtoTestTool
                 _client.SendAsync(bytes.Span);
 
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
+
+                if (PacketRecorder.Client.IsRecording)
+                {
+                    PacketRecorder.Client.Record(PacketDirection.Outbound, packet, message);
+                }
             }
             catch (Exception ex)
             {
@@ -798,6 +857,11 @@ namespace ProtoTestTool
                     var readSize = ScriptGlobals.Codec.TryDecode(ref span, out var packet);
                     if (readSize > 0)
                     {
+                        if (PacketRecorder.Client.IsRecording && packet != null)
+                        {
+                            PacketRecorder.Client.Record(PacketDirection.Inbound, packet, packet.Message);
+                        }
+
                         _receiveBuffer.RemoveRange(0, (int) readSize);
 
                         if (packet != null)

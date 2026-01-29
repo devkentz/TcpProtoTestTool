@@ -117,7 +117,7 @@
 
          <!-- 4. Script Logs Content -->
          <!-- 4. Script Logs Content -->
-         <RichTextBox Grid.Row="4" x:Name="ScriptLogBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#D4D4D4" FontFamily="Consolas" BorderThickness="0" Margin="5" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top">
+         <RichTextBox Grid.Row="4" x:Name="ScriptLogBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Background="{DynamicResource ApplicationBackgroundBrush}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontFamily="Consolas" BorderThickness="0" Margin="5" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top">
              <RichTextBox.Resources>
                  <Style TargetType="{x:Type Paragraph}">
                      <Setter Property="Margin" Value="0"/>
