@@ -204,10 +204,12 @@
                                         <TextBlock Text="Request Inspector" Margin="15,10" FontWeight="Bold"/>
                                         <TabControl Grid.Row="1" Margin="5">
                                             <TabItem Header="Body (JSON)">
-                                                <wv2:WebView2 x:Name="JsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                                <controls:MonacoEditor x:Name="JsonEditorView" EditorLanguage="json" ShowMinimap="False" IsReadOnly="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+
                                             </TabItem>
                                             <TabItem Header="Header (JSON)">
-                                                <wv2:WebView2 x:Name="HeaderJsonEditorView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                                <controls:MonacoEditor x:Name="HeaderJsonEditorView" EditorLanguage="json" ShowMinimap="False" IsReadOnly="False" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+
                                             </TabItem>
                                         </TabControl>
                                     </Grid>
@@ -223,7 +225,8 @@
                                         <TextBlock Text="Response Inspector" Margin="15,10" FontWeight="Bold"/>
                                         <TabControl Grid.Row="1" Margin="5">
                                             <TabItem Header="Body (JSON)">
-                                                <wv2:WebView2 x:Name="ResponseBoxView" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                                <controls:MonacoEditor x:Name="ResponseBoxView" EditorLanguage="json" ShowMinimap="True" IsReadOnly="True" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+
                                             </TabItem>
                                             <TabItem Header="Headers">
                                                 <DataGrid x:Name="ResponseHeaderGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0" Background="Transparent">
@@ -284,10 +287,12 @@
                                          <TextBlock Text="Packet Inspector" Margin="10,5" FontWeight="Bold" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                          <TabControl Grid.Row="1" Margin="5">
                                              <TabItem Header="Body (JSON)">
-                                                 <wv2:WebView2 x:Name="ReplayBodyJsonViewer" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                                 <controls:MonacoEditor x:Name="ReplayBodyJsonViewer" EditorLanguage="json" ShowMinimap="False" IsReadOnly="True" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+
                                              </TabItem>
                                              <TabItem Header="Header (JSON)">
-                                                 <wv2:WebView2 x:Name="ReplayHeaderJsonViewer" DefaultBackgroundColor="Transparent" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                                                 <controls:MonacoEditor x:Name="ReplayHeaderJsonViewer" EditorLanguage="json" ShowMinimap="False" IsReadOnly="True" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+
                                              </TabItem>
                                          </TabControl>                                         
                                      </Grid>

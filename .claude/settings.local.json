@@ -10,7 +10,11 @@
       "Bash(Copy-Item -Path \"COMMANDS.md\",\"FLAGS.md\",\"MCP.md\",\"MODES.md\",\"ORCHESTRATOR.md\",\"PERSONAS.md\",\"PRINCIPLES.md\",\"RULES.md\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue; Copy-Item -Path \"commands\" -Destination \"backup_superclaude_20260126\"\" -Recurse -ErrorAction SilentlyContinue)",
       "Bash(Copy-Item -Path \".superclaude-metadata.json\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue; Copy-Item -Path \"logssuperclaude*.log\" -Destination \"backup_superclaude_20260126\"\" -ErrorAction SilentlyContinue)",
       "Bash(Write-Host \"Backup completed\")",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\n프로젝트 구조 리팩토링 및 기능 개선\n\n- Services 폴더로 ProtoCompiler, RoslynIntelliSenseService, ScaffoldingService, UnloadableAssemblyContext 분리\n- Controls/PacketSelector 컨트롤 추가\n- SourceViewerWindow 추가\n- ReverseProxyServer를 ProxyServer로 리네이밍\n- 스크립트 관련 코드\\(ScriptLoader, ScriptEditor, MainWindow.Scripting\\) 대폭 개선\n- NuGetWindow/NuGetClient UI 및 로직 개선\n- 불필요한 .csx 스크립트 파일 및 빌드 로그 삭제\n- Monaco 에디터 기능 개선\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(dir /B C:WorkbackupProtoTestTool)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

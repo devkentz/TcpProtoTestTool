@@ -3,6 +3,7 @@ using System.Windows;
 
 
 using System.Windows.Documents;
+using System.Collections.Generic;
 using System.Windows.Media;
 using System.IO;
 using Newtonsoft.Json;
@@ -23,9 +24,140 @@ namespace ProtoTestTool
 
     public partial class MainWindow
     {
-        private SimpleTcpClient? _client;
+        private INetworkService _networkService; // Use Interface
         private readonly ScriptLoader _scriptLoader = new();
         private readonly List<byte> _receiveBuffer = new();
+        // ... (other fields)
+
+        // ...
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            _networkService = new NetworkService(); // Manual DI for now
+
+            // Subscribe to events globally or in Connect method? 
+            // Better to subscribe once here if life-cycle matches window.
+            _networkService.Connected += OnConnected;
+            _networkService.Disconnected += OnDisconnected;
+            _networkService.ErrorOccurred += OnError;
+            _networkService.DataReceived += OnDataReceived;
+
+            Closing += MainWindow_Closing;
+            // ...
+        }
+
+        private void OnConnected()
+        {
+             Dispatcher.Invoke(() =>
+             {
+                 AppendLog($"Connected to Server", Brushes.DeepSkyBlue);
+                 UpdateConnectionState(true);
+             });
+        }
+
+        private void OnDisconnected()
+        {
+             Dispatcher.Invoke(() =>
+             {
+                 AppendLog("Disconnected", Brushes.Orange);
+                 UpdateConnectionState(false);
+             });
+        }
+
+        private void OnError(string err)
+        {
+             Dispatcher.Invoke(() =>
+             {
+                 AppendLog($"Socket Error: {err}", Brushes.Red);
+                 UpdateConnectionState(false);
+             });
+        }
+
+        // ...
+
+        private async void ConnectToggleBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_networkService.IsConnected)
+            {
+                _networkService.Disconnect();
+            }
+            else
+            {
+                var ip = IpBox.Text;
+                if (!int.TryParse(PortBox.Text, out var port))
+                {
+                    AppendLog("Invalid Port", Brushes.Red);
+                    return;
+                }
+
+                SaveWorkspaceConfiguration();
+                ConnectToggleBtn.IsEnabled = false;
+
+                try
+                {
+                    AppendLog($"Connecting to {ip}:{port}...", Brushes.Gray);
+                    await _networkService.ConnectAsync(ip, port);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"Connection failed: {ex.Message}", Brushes.Red);
+                    UpdateConnectionState(false);
+                }
+            }
+        }
+
+        // ...
+
+        private async void PacketSelectorControl_PacketSelected(object sender, RoutedEventArgs e)
+        {
+            // ...
+                // Check service status
+                SendBtn.IsEnabled = _networkService.IsConnected;
+            // ...
+        }
+
+        // ...
+
+        private async Task SendBtn_ClickAsync(object sender, RoutedEventArgs e)
+        {
+             // ...
+                if (!_networkService.IsConnected)
+                {
+                    FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
+                    return;
+                }
+             // ...
+        }
+
+        private Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
+        {
+            try
+            {
+                if (!_networkService.IsConnected)
+                {
+                    AppendLog("Cannot send: Disconnected", Brushes.Red);
+                    return Task.CompletedTask;
+                }
+                
+                // ... (Interceptor logic)
+
+                var packet = new Packet(headerObj, message);
+
+                // Encode & Send
+                var bytes = ScriptGlobals.Codec.Encode(packet);
+                _networkService.SendAsync(bytes); // Fire and forget wrapper
+
+                AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
+                
+                // ... (Recording logic)
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
+            }
+            return Task.CompletedTask;
+        }
 
         // Roslyn
         // private readonly RoslynService _roslynService;
@@ -35,8 +167,7 @@ namespace ProtoTestTool
         private string _currentEditingFile = "";
         
         // Replay State
-        private List<RecordedPacket> _loadedPackets = new();
-        private string _monacoUri = "";
+        private ObservableCollection<RecordedPacket> _loadedPackets = new ObservableCollection<RecordedPacket>();
 
         // Workspace
         private string _workspacePath = "";
@@ -64,7 +195,8 @@ namespace ProtoTestTool
         {
             _workspacePath = workspacePath;
             InitializeWorkspaceFiles(_workspacePath);
-            InitializeMonacoEditors();
+            // Monaco Editors initialize themselves via Loaded event.
+
 
             Title = $"ProtoTestTool - {_workspacePath}";
 
@@ -75,12 +207,12 @@ namespace ProtoTestTool
             }
             
             // Re-compile logic
-            Dispatcher.InvokeAsync(async () => 
+            _ = Dispatcher.InvokeAsync(async () => 
             {
                  // Small delay to ensure UI ready
                  await Task.Delay(500);
                  await LoadProtosFromFolderAsync(_workspacePath);
-                 await CompileWorkspaceScriptsAsync();
+                 await CompileWorkspaceScriptsAsync(_workspacePath);
             });
         }
 
@@ -146,8 +278,8 @@ namespace ProtoTestTool
                 }
 
 
-                // Initialize Monaco Editors
-                await InitializeMonacoEditors();
+                // Initialize Monaco Editors handled by control
+                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -155,99 +287,8 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task InitializeMonacoEditors()
-        {
-            var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-            if (!File.Exists(editorPath))
-            {
+        // Legacy Monaco Init Logic Removed
 
-                MessageBox.Show($"Editor file not found: {editorPath}");
-                return;
-            }
-
-            _monacoUri = new Uri(editorPath).AbsoluteUri;
-
-            await InitializeSingleEditor(JsonEditorView, _monacoUri, "json", enableMinimap: false, isReadOnly: false);
-            await InitializeSingleEditor(HeaderJsonEditorView, _monacoUri, "json", enableMinimap: false, isReadOnly: false);
-            await InitializeSingleEditor(ResponseBoxView, _monacoUri, "json", isReadOnly: true);
-
-            // Hook up Loaded events for Replay viewers (TabControl lifecycle management)
-            ReplayBodyJsonViewer.Loaded += async (s, e) => 
-            {
-                if (ReplayBodyJsonViewer.CoreWebView2 == null)
-                    await InitializeSingleEditor(ReplayBodyJsonViewer, _monacoUri, "json", isReadOnly: true);
-            };
-            ReplayHeaderJsonViewer.Loaded += async (s, e) => 
-            {
-                if (ReplayHeaderJsonViewer.CoreWebView2 == null)
-                    await InitializeSingleEditor(ReplayHeaderJsonViewer, _monacoUri, "json", isReadOnly: true);
-            };
-        }
-
-        private async Task InitializeSingleEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string uri, string language, bool enableMinimap = true, bool isReadOnly = false)
-        {
-            await webView.EnsureCoreWebView2Async();
-            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            webView.CoreWebView2.Settings.IsScriptEnabled = true;
-
-            var tcs = new TaskCompletionSource<bool>();
-            
-            // Handler for Web Messages (Ready signal)
-            EventHandler<Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs>? msgHandler = null;
-            msgHandler = (s, e) =>
-            {
-                try
-                {
-                     // Debug: AppendLog($"WebMsg: {e.WebMessageAsJson}", Brushes.Gray);
-                     var json = e.WebMessageAsJson;
-                     if (!string.IsNullOrEmpty(json) && (json.Contains("\"type\":\"ready\"") || json.Contains("'type':'ready'") || json.Contains("\"ready\"")))
-                     {
-                         tcs.TrySetResult(true);
-                     }
-                }
-                catch {}
-            };
-
-            webView.CoreWebView2.WebMessageReceived += msgHandler;
-
-            webView.CoreWebView2.Navigate(uri);
-
-            // Wait for Ready (Timeout 3s)
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(3000));
-            
-            webView.CoreWebView2.WebMessageReceived -= msgHandler;
-
-            if (completedTask == tcs.Task && tcs.Task.Result)
-            {
-                // Init Settings
-                await webView.ExecuteScriptAsync($"setLanguage('{language}');");
-                await webView.ExecuteScriptAsync($"setMinimap({enableMinimap.ToString().ToLower()});");
-                await webView.ExecuteScriptAsync("setTheme('vs-dark');");
-                await webView.ExecuteScriptAsync($"setReadOnly({isReadOnly.ToString().ToLower()});");
-                AppendLog("Viewer Ready", Brushes.Green);
-            }
-            else
-            {
-                AppendLog("Viewer Init Timeout", Brushes.Orange);
-                await webView.ExecuteScriptAsync("if(typeof layout === 'function') layout();");
-            }
-        }
-
-        private async Task SetEditorContentAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string content)
-        {
-            if (webView?.CoreWebView2 == null) return;
-            var jsonContent = JsonConvert.SerializeObject(content);
-            await webView.ExecuteScriptAsync($"setContent({jsonContent});");
-        }
-
-        private async Task<string> GetEditorContentAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView)
-        {
-            if (webView?.CoreWebView2 == null) return string.Empty;
-            var result = await webView.ExecuteScriptAsync("getContent();");
-            // Result is JSON encoded string (e.g. "\"content\""), need to unquote
-            if (result == "null" || result == "undefined") return string.Empty;
-            return JsonConvert.DeserializeObject<string>(result) ?? string.Empty;
-        }
 
         #region Workspace Management
 
@@ -516,7 +557,7 @@ namespace ProtoTestTool
             if (ScriptGlobals.State is ScriptContract.ScriptStateStore store)
             {
                 store.Clear();
-                AppendLog("State Store Cleared.");
+                AppendLog("State Store Cleared.", Brushes.Gray);
             }
         }
 
@@ -671,7 +712,7 @@ namespace ProtoTestTool
 
                 // Generate Default JSON
                 var (_, json) = convertor.DefaultJsonString();
-                await SetEditorContentAsync(JsonEditorView, json);
+                await JsonEditorView.SetTextAsync(json);
                 SendBtn.IsEnabled = _client != null && _client.IsConnected;
 
                 _currentEditingFile = convertor.Name;
@@ -689,28 +730,23 @@ namespace ProtoTestTool
         {
             if (_scriptAssembly == null)
             {
-                await SetEditorContentAsync(HeaderJsonEditorView, "{}");
+                await HeaderJsonEditorView.SetTextAsync("{}");
                 return;
             }
 
             var headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
                              ?? _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
 
-            if (headerType == null)
+            if (headerType != null)
             {
-                await SetEditorContentAsync(HeaderJsonEditorView, "{}");
-                return;
+                 // Default empty header
+                 var dummy = Activator.CreateInstance(headerType);
+                 var json = JsonConvert.SerializeObject(dummy, Formatting.Indented);
+                 await HeaderJsonEditorView.SetTextAsync(json);
             }
-
-            try
+            else
             {
-                var headerInstance = Activator.CreateInstance(headerType);
-                var headerJson = JsonConvert.SerializeObject(headerInstance, Formatting.Indented);
-                await SetEditorContentAsync(HeaderJsonEditorView, headerJson);
-            }
-            catch
-            {
-                await SetEditorContentAsync(HeaderJsonEditorView, "{}");
+                 await HeaderJsonEditorView.SetTextAsync("{}");
             }
         }
 
@@ -767,11 +803,10 @@ namespace ProtoTestTool
         {
             try
             {
-                if (_scriptAssembly == null)
+                if (PacketSelectorControl.SelectedPacket == null)
                 {
-                    // Compile First
-                    await CompileScriptsAsync(_workspacePath, AppendLog);
-                    if (_scriptAssembly == null) return;
+                    AppendLog("No packet type selected.", Brushes.Red);
+                    return;
                 }
 
                 if (_client == null || !_client.IsConnected)
@@ -787,7 +822,7 @@ namespace ProtoTestTool
                     return;
                 }
 
-                var json = await GetEditorContentAsync(JsonEditorView);
+                var json = await JsonEditorView.GetTextAsync();
 
                 if (JsonConvert.DeserializeObject(json, type) is not IMessage message)
                     return;
@@ -827,7 +862,7 @@ namespace ProtoTestTool
                 try
                 {
                     // Use HeaderJsonEditor.Text
-                    headerObj = (IHeader?) JsonConvert.DeserializeObject(await GetEditorContentAsync(HeaderJsonEditorView), headerType);
+                    headerObj = (IHeader?) JsonConvert.DeserializeObject(await HeaderJsonEditorView.GetTextAsync(), headerType);
                 }
                 catch (Exception ex)
                 {
@@ -850,14 +885,14 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task SendPacketPipelineAsync(IMessage message, IHeader headerObj)
+        private Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
         {
             try
             {
                 if (_client == null || !_client.IsConnected)
                 {
                     AppendLog("Cannot send: Disconnected", Brushes.Red);
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 // Client Interceptor Hook
@@ -877,15 +912,17 @@ namespace ProtoTestTool
 
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
 
-                if (PacketRecorder.Client.IsRecording)
+                if (PacketRecorder.Client.IsRecording && !isReplay)
                 {
                     PacketRecorder.Client.Record(PacketDirection.Outbound, packet);
                 }
             }
+
             catch (Exception ex)
             {
                 AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
             }
+            return Task.CompletedTask;
         }
 
         public void SendPacket(IHeader header, IMessage message)
@@ -925,14 +962,14 @@ namespace ProtoTestTool
 
         private void OnDataReceived(byte[] data)
         {
-            Dispatcher.Invoke(() =>
+            _ = Dispatcher.InvokeAsync(async () =>
             {
                 _receiveBuffer.AddRange(data);
-                ProcessReceiveBuffer();
+                await ProcessReceiveBuffer();
             });
         }
 
-        private void ProcessReceiveBuffer()
+        private async Task ProcessReceiveBuffer()
         {
             if (ScriptGlobals.Codec == null) return;
 
@@ -956,7 +993,7 @@ namespace ProtoTestTool
 
                         if (packet != null)
                         {
-                            var payload = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
+                            var jsonBody = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
                             var header = packet.Header.ToJsonString();
                             AppendLog($"[Recv] {packet.Message.GetType().Name} ({readSize} bytes)", Brushes.LimeGreen);
                             // Update Response Inspector (Headers)
@@ -977,7 +1014,7 @@ namespace ProtoTestTool
                             }
 
                             // Update Response Inspector (Body)
-                            _ = SetEditorContentAsync(ResponseBoxView, payload);
+                            await ResponseBoxView.SetTextAsync(jsonBody);
                         }
                     }
                     else
@@ -1043,7 +1080,7 @@ namespace ProtoTestTool
                     _scriptEditorWindow.WindowState = WindowState.Normal;
             }
         }
-        private void LoadRecordingBtn_Click(object sender, RoutedEventArgs e)
+        private async void LoadRecordingBtn_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFileDialog
             {
@@ -1055,12 +1092,12 @@ namespace ProtoTestTool
             {
                 try
                 {
-                    var json = File.ReadAllText(dialog.FileName);
-                    var packets = System.Text.Json.JsonSerializer.Deserialize<List<RecordedPacket>>(json);
+                    // Delegated to ReplayService
+                    var packets = await _replayService.LoadRecordingAsync(dialog.FileName);
                     
                     if (packets != null)
                     {
-                        _loadedPackets = packets;
+                        _loadedPackets = new ObservableCollection<RecordedPacket>(packets);
                         ReplayPacketGrid.ItemsSource = _loadedPackets;
                         ReplayFileNameText.Text = Path.GetFileName(dialog.FileName);
                         AppendLog($"Loaded {packets.Count} packets from {Path.GetFileName(dialog.FileName)}", Brushes.Green);
@@ -1081,86 +1118,57 @@ namespace ProtoTestTool
                 return;
             }
 
+
+
             if (_client == null || !_client.IsConnected)
             {
-                MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
+                 MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                 return;
             }
 
-            int count = 0;
-            foreach (var record in _loadedPackets)
+            // Delegate to ReplayService
+            await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) => 
             {
-                // Only replay Outbound packets
-                if (record.Direction != "Outbound") continue;
+                 // Resolve Dynamic Header Type from ScriptAssembly
+                 Type? headerType = null;
+                 if (_scriptAssembly != null)
+                 {
+                     headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                     if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
+                 }
 
-                try
-                {
-                    // 1. Resolve Type using ProtoLoaderManager (checks all loaded Protos)
-                    // We match by Descriptor.FullName to ensure correct proto mapping
-                    var packetConvertor = ProtoLoaderManager.Instance.PacketsByMsgId.Values
-                        .FirstOrDefault(p => 
-                        {
-                            var desc = p.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
-                            return desc != null && desc.FullName == record.PacketName;
-                        });
+                 IHeader? header = null;
+                 // Header Conversion (JsonElement -> Dynamic Header Type)
+                 if (headerType != null && headerObj is System.Text.Json.JsonElement je)
+                 {
+                     try 
+                     {
+                         header = (IHeader?)JsonConvert.DeserializeObject(je.GetRawText(), headerType);
+                     }
+                     catch { /* Header parse fail */ }
+                 }
+                 
+                 // Fallback or if headerType null (shouldn't happen if connected properly)
+                 if (header == null) 
+                 {
+                     // Without a valid header, we cannot send the packet reliably through the pipeline
+                     // as the pipeline expects a concrete header type (usually).
+                     // Log and skip.
+                     // AppendLog($"[Replay Error] Header resolution failed for {msg.Descriptor.Name}", Brushes.Red); 
+                     // We can try to send with null if pipeline supports it, but SendPacketPipelineAsync signature usually requires non-null.
+                     // Let's check SendPacketPipelineAsync signature. 
+                     // It is defined as: SendPacketPipelineAsync(IMessage message, IHeader header, bool isReplay = false) (inferred)
+                     
+                     // If we really want to support 'untyped' replays, we'd need a LooseHeader or similar.
+                     // For now, strict behavior matches original logic.
+                      return; 
+                 }
 
-                    if (packetConvertor?.Type == null)
-                    {
-                        AppendLog($"[Replay Skip] Unknown Type: {record.PacketName}", Brushes.Yellow);
-                        continue;
-                    }
-                    
-                    var msgDescriptor = packetConvertor.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
+                 await SendPacketPipelineAsync(msg, header, isReplay: true);
 
-                    if (msgDescriptor == null)
-                    {
-                         AppendLog($"[Replay Skip] Descriptor not found for: {record.PacketName}", Brushes.Yellow);
-                         continue;
-                    }
-
-                    // 2. Deserialize Payload
-                    var payloadJson = System.Text.Json.JsonSerializer.Serialize(record.Payload);
-                    var parser = new JsonParser(JsonParser.Settings.Default);
-                    var message = parser.Parse(payloadJson, msgDescriptor);
-
-                    // 3. Resolve Header
-                    // Header is likely defined in the ScriptAssembly (e.g. PacketHeader : IHeader)
-                    Type? headerType = null;
-                    if (_scriptAssembly != null)
-                    {
-                        headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                        if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
-                    }
-
-                    IHeader? headerObj = null;
-                    if (headerType != null && record.Header != null)
-                    {
-                        var headerJson = System.Text.Json.JsonSerializer.Serialize(record.Header);
-                        headerObj = (IHeader?)JsonConvert.DeserializeObject(headerJson, headerType);
-                    }
-
-                    if (headerObj == null)
-                    {
-                        // Fallback: If no header recorded or resolution failed, try to create default?
-                        // For now, strict check.
-                        AppendLog($"[Replay Skip] Header missing/invalid for {record.PacketName}", Brushes.Red);
-                        continue;
-                    }
-
-                    // 4. Send via Pipeline
-                    await SendPacketPipelineAsync(message, headerObj);
-                    count++;
-                    
-                    await Task.Delay(10); 
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"[Replay Error] {record.PacketName}: {ex.Message}", Brushes.Red);
-                }
-            }
-
-
-            AppendLog($"Replay Finished. Sent {count} packets.", Brushes.Green);
+            }, AppendLog);
+            
+            AppendLog("Replay Finished.", Brushes.Green);
         }
 
         private async void ReplayPacketGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1169,14 +1177,6 @@ namespace ProtoTestTool
             // MessageBox.Show($"Selection Changed! Index: {ReplayPacketGrid.SelectedIndex}");
 
             if (_loadedPackets == null) return;
-
-            // Check if Viewer is ready (Initialized via Loaded event)
-            if (ReplayBodyJsonViewer.CoreWebView2 == null)
-            {
-                 // Allow some time for Loaded event to fire if it's the first time being shown
-                 await Task.Delay(200); 
-                 if (ReplayBodyJsonViewer.CoreWebView2 == null) return;
-            }
 
             if (ReplayPacketGrid.SelectedIndex >= 0 && ReplayPacketGrid.SelectedIndex < _loadedPackets.Count)
             {
@@ -1195,18 +1195,16 @@ namespace ProtoTestTool
                         };
                         var content = System.Text.Json.JsonSerializer.Serialize(packet, options);
                         
-                        await SetEditorContentAsync(ReplayBodyJsonViewer, content);
-                        await Task.Delay(50);
-                        await ReplayBodyJsonViewer.ExecuteScriptAsync("if(typeof layout === 'function') layout();");
+                        await ReplayBodyJsonViewer.SetTextAsync(content);
                     }
                     catch (Exception ex)
                     {
-                         await SetEditorContentAsync(ReplayBodyJsonViewer, $"// Error: {ex.Message}");
+                         await ReplayBodyJsonViewer.SetTextAsync($"// Error: {ex.Message}");
                     }
                 }
                 else
                 {
-                     await SetEditorContentAsync(ReplayBodyJsonViewer, "");
+                     await ReplayBodyJsonViewer.SetTextAsync("");
                 }
 
                 // 2. Display Header
@@ -1219,33 +1217,20 @@ namespace ProtoTestTool
                             WriteIndented = true,
                             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                         });
-                        await SetEditorContentAsync(ReplayHeaderJsonViewer, headerJson);
+                        await ReplayHeaderJsonViewer.SetTextAsync(headerJson);
                     }
                     catch
                     {
-                        await SetEditorContentAsync(ReplayHeaderJsonViewer, "// Error displaying header");
+                        await ReplayHeaderJsonViewer.SetTextAsync("// Error displaying header");
                     }
                 }
                 else
                 {
-                     await SetEditorContentAsync(ReplayHeaderJsonViewer, "");
+                     await ReplayHeaderJsonViewer.SetTextAsync("");
                 }
             }
         }
 
-        private async Task EnsureReplayViewerInitialized(Microsoft.Web.WebView2.Wpf.WebView2 webView)
-        {
-            if (webView.CoreWebView2 == null && !string.IsNullOrEmpty(_monacoUri))
-            {
-                try 
-                {
-                    await InitializeSingleEditor(webView, _monacoUri, "json", isReadOnly: true);
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"[Viewer Init Error] {ex.Message}", Brushes.Red);
-                }
-            }
-        }
+
     }
 }

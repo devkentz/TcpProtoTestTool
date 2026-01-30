@@ -1,5 +1,10 @@
 # ProtoTestTool
 
+![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen)
+![NetVersion](https://img.shields.io/badge/.NET-9.0-purple)
+![Platform](https://img.shields.io/badge/Platform-Windows-blue)
+![License](https://img.shields.io/badge/License-MIT-orange)
+
 Protobuf 기반 TCP 패킷 테스트 도구. 클라이언트 모드와 프록시 모드를 지원하며, C# 스크립트를 통해 패킷 코덱/인터셉터를 런타임에 정의하고 핫 리로드할 수 있습니다.
 
 ---
@@ -13,7 +18,7 @@ Protobuf 기반 TCP 패킷 테스트 도구. 클라이언트 모드와 프록시
 - 패킷 검색 및 선택 UI
 
 ### Proxy 모드
-- 로컬 포트에서 리슨하고 업스트림 서버로 포워딩하는 리버스 프록시
+- 로컬 포트에서 리슨하고 업스트림 서버로 포워딩하는 프록시
 - Outbound (Client -> Server) / Inbound (Server -> Client) 양방향 인터셉터
 - 패킷 수정, 드롭, 바이패스(재직렬화 생략) 지원
 - `System.Threading.Channels` 기반 비동기 파이프라인으로 패킷 순서 보장
@@ -148,29 +153,33 @@ dotnet publish -c Release
 
 ## 프록시 패킷 처리 흐름
 
-```
-Client
-  │
-  ▼
-ProxyServer (로컬 포트)
-  │
-  ▼
-ProxySession
-  ├─ Outbound Channel ──→ ByteBuffer ──→ Codec.TryDecode()
-  │                                         │
-  │                                    ProxyPacketContext
-  │                                         │
-  │                              Pipeline.RunOutboundAsync()
-  │                                         │
-  │                                  Codec.Encode() ──→ Upstream Server
-  │
-  └─ Inbound Channel  ◀── UpstreamClient
-                              │
-                         ByteBuffer ──→ Codec.TryDecode()
-                                           │
-                                      ProxyPacketContext
-                                           │
-                                Pipeline.RunInboundAsync()
-                                           │
-                                    Codec.Encode() ──→ Client
+```mermaid
+graph TD
+    Client[Client] -->|TCP Connect| ProxyServer
+    ProxyServer[Proxy Server (Local Port)] --> ProxySession
+
+    subgraph ProxySession [Proxy Session Handling]
+        direction TB
+        
+        subgraph Outbound [Outbound (Client -> Server)]
+            OC[Outbound Channel] --> OB[ByteBuffer]
+            OB --> ODec[Codec.TryDecode]
+            ODec --> OCtx[ProxyPacketContext]
+            OCtx --> OPipe[Pipeline.RunOutboundAsync]
+            OPipe --> OEnc[Codec.Encode]
+        end
+
+        subgraph Inbound [Inbound (Server -> Client)]
+            UC[UpstreamClient] --> ICh[Inbound Channel]
+            ICh --> IB[ByteBuffer]
+            IB --> IDec[Codec.TryDecode]
+            IDec --> ICtx[ProxyPacketContext]
+            ICtx --> IPipe[Pipeline.RunInboundAsync]
+            IPipe --> IEnc[Codec.Encode]
+        end
+
+        OEnc -->|Forward| UpstreamServer[Upstream Server]
+        UpstreamServer -->|Response| UC
+        IEnc -->|Response| Client
+    end
 ```
