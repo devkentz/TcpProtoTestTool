@@ -62,7 +62,6 @@ namespace ProtoTestTool.Controls
         public PacketSelector()
         {
             InitializeComponent();
-            // LoadPackets(); // Don't auto-load, wait for MainWindow to call Refresh() or Loaded event
             Loaded += (s, e) => LoadPackets();
         }
 

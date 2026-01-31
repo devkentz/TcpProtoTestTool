@@ -15,15 +15,11 @@ namespace ProtoTestTool.Network
             _proxySession = proxySession;
         }
 
-        protected override void OnConnected()
-        {
-            // Console.WriteLine($"[Upstream] Connected to {Address}:{Port}");
-        }
+        protected override void OnConnected() { }
 
         protected override void OnDisconnected()
         {
-            // Console.WriteLine($"[Upstream] Disconnected from {Address}:{Port}");
-            _proxySession.Disconnect(); // Disconnect client if server disconnects
+            _proxySession.Disconnect();
         }
 
         protected override void OnReceived(byte[] buffer, long offset, long size)
@@ -32,9 +28,6 @@ namespace ProtoTestTool.Network
             _proxySession.OnUpstreamReceived(buffer, offset, size);
         }
 
-        protected override void OnError(SocketError error)
-        {
-            // Console.WriteLine($"[Upstream] Error: {error}");
-        }
+        protected override void OnError(SocketError error) { }
     }
 }

@@ -209,7 +209,6 @@ namespace ProtoTestTool
             _scriptState ??= new ScriptStateStore();
 
             var toolLogger = new ToolScriptLogger((msg, color) => { Dispatcher.Invoke(() => AppendLog(msg, color)); });
-            //var clientApi = new ToolClientApi(this);
 
             ScriptGlobals.Initialize(_scriptState, toolLogger);
             ScriptGlobals.SetServices(registry, codec);
@@ -316,21 +315,6 @@ namespace ProtoTestTool
             });
         }
 
-
-        // _headerAssembly is no longer separate
-
-        private void RefreshPacketList()
-        {
-            if (ScriptGlobals.Registry == null) return;
-            
-            // Bridge: Register script types to Singleton manager so PacketSelector sees them
-            foreach (var type in ScriptGlobals.Registry.GetMessageTypes())
-            {
-                 ProtoLoaderManager.Instance.RegisterPacket(type);
-            }
-
-            PacketSelectorControl.Refresh();
-        }
 
         public void InitializeWorkspaceFiles(string workspacePath)
         {
@@ -557,8 +541,6 @@ namespace ProtoTestTool
                         typeof(IScriptLogger),
                     };
 
-                    // Add proto message types
-                    // (PacketId -> MsgId refactoring note: PacketsByName is string key)
                     types.AddRange(ProtoLoaderManager.Instance.PacketsByName.Values.Select(p => p.Type));
 
                     var json = CompletionService.GenerateCompletionJson(types);

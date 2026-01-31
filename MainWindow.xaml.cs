@@ -1,24 +1,19 @@
-using ProtoTestTool.Services;
-using System.Windows;
-
-
-using System.Windows.Documents;
 using System.Collections.Generic;
-using System.Windows.Media;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Text.Encodings.Web;
+using System.Windows.Documents;
+using Google.Protobuf;
+using Google.Protobuf.Reflection;
+using Microsoft.Win32;
 using Newtonsoft.Json;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using Google.Protobuf;
-using Google.Protobuf.Reflection;
-
-using System.Windows.Controls;
-using Microsoft.Win32; // For OpenFileDialog
-
-
-using System.Text.Encodings.Web;
+using ProtoTestTool.Services;
 
 namespace ProtoTestTool
 {
@@ -32,10 +27,8 @@ namespace ProtoTestTool
         public MainWindow()
         {
             InitializeComponent();
-            _networkService = new NetworkService(); // Manual DI for now
+            _networkService = new NetworkService();
 
-            // Subscribe to events globally or in Connect method? 
-            // Better to subscribe once here if life-cycle matches window.
             _networkService.Connected += OnConnected;
             _networkService.Disconnected += OnDisconnected;
             _networkService.ErrorOccurred += OnError;
@@ -72,7 +65,6 @@ namespace ProtoTestTool
              });
         }
 
-        // ...
 
         private async void ConnectToggleBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -134,7 +126,6 @@ namespace ProtoTestTool
             }
         }
 
-        // ...
 
         private async Task SendBtn_ClickAsync(object sender, RoutedEventArgs e)
         {
@@ -232,14 +223,8 @@ namespace ProtoTestTool
             return Task.CompletedTask;
         }
 
-        // Roslyn
-        // private readonly RoslynService _roslynService;
         private ScriptEditorWindow? _scriptEditorWindow;
 
-        // Editor State
-        // private string _currentEditingFile = ""; // Removed
-
-        
         // Replay State
         private ObservableCollection<RecordedPacket> _loadedPackets = new ObservableCollection<RecordedPacket>();
 
@@ -254,13 +239,7 @@ namespace ProtoTestTool
             public string Value { get; set; } = string.Empty;
         }
 
-        public class HeaderScriptGlobals
-        {
-            public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
-        }
-
-        private ObservableCollection<KeyValueItem> _requestHeaders = new ObservableCollection<KeyValueItem>(); // Kept for compilation safety until removed
-        private ObservableCollection<KeyValueItem> _responseHeaders = new ObservableCollection<KeyValueItem>();
+        private readonly ObservableCollection<KeyValueItem> _responseHeaders = new ObservableCollection<KeyValueItem>();
 
         // Services
         private readonly IReplayService _replayService = new ReplayService();
@@ -286,12 +265,7 @@ namespace ProtoTestTool
         {
             try
             {
-                // Initialize Roslyn Editor (Removed for Monaco migration)
-                // if (_roslynService?.Host != null)
-                // {
-                //    ProtoSourceViewer is now a TextBox
-                // }
-                // Show Workspace dialog if not set (Handled by App.xaml.cs, but fallback if empty?)
+                // Fallback: show workspace dialog if not set
                 if (string.IsNullOrEmpty(_workspacePath))
                 {
                     ShowWorkspaceDialog();
@@ -310,7 +284,6 @@ namespace ProtoTestTool
                 }
 
 
-                // Initialize Monaco Editors handled by control
                 await Task.CompletedTask;
             }
             catch (Exception ex)
@@ -319,7 +292,6 @@ namespace ProtoTestTool
             }
         }
 
-        // Legacy Monaco Init Logic Removed
 
 
         #region Workspace Management
@@ -440,9 +412,6 @@ namespace ProtoTestTool
                     if (Directory.GetFiles(path, "*.proto", SearchOption.AllDirectories).Length > 0)
                     {
                         protoPath = path;
-                        // Optional: Update config automatically?
-                        // config.ProtoFolderPath = path;
-                        // config.Save(path);
                     }
                 }
                 catch
@@ -990,21 +959,8 @@ namespace ProtoTestTool
                      catch { /* Header parse fail */ }
                  }
                  
-                 // Fallback or if headerType null (shouldn't happen if connected properly)
-                 if (header == null) 
-                 {
-                     // Without a valid header, we cannot send the packet reliably through the pipeline
-                     // as the pipeline expects a concrete header type (usually).
-                     // Log and skip.
-                     // AppendLog($"[Replay Error] Header resolution failed for {msg.Descriptor.Name}", Brushes.Red); 
-                     // We can try to send with null if pipeline supports it, but SendPacketPipelineAsync signature usually requires non-null.
-                     // Let's check SendPacketPipelineAsync signature. 
-                     // It is defined as: SendPacketPipelineAsync(IMessage message, IHeader header, bool isReplay = false) (inferred)
-                     
-                     // If we really want to support 'untyped' replays, we'd need a LooseHeader or similar.
-                     // For now, strict behavior matches original logic.
-                      return; 
-                 }
+                 if (header == null)
+                      return;
 
                  await SendPacketPipelineAsync(msg, header, isReplay: true);
 
@@ -1015,9 +971,6 @@ namespace ProtoTestTool
 
         private async void ReplayPacketGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            // PROBE: Verify Event Firing
-            // MessageBox.Show($"Selection Changed! Index: {ReplayPacketGrid.SelectedIndex}");
-
             if (_loadedPackets == null) return;
 
             if (ReplayPacketGrid.SelectedIndex >= 0 && ReplayPacketGrid.SelectedIndex < _loadedPackets.Count)

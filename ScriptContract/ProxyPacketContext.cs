@@ -36,10 +36,6 @@ namespace ProtoTestTool.ScriptContract
         /// </summary>
         public ReadOnlyMemory<byte> Raw { get; }
 
-        // TODO: Add Session References if needed (e.g. ISessionContext)
-        // public ISessionContext Client { get; }
-        // public ISessionContext Server { get; }
-
         public ProxyPacketContext(Packet packet, PacketDirection direction, ReadOnlyMemory<byte> raw)
         {
             Packet = packet;

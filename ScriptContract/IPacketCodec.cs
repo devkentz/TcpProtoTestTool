@@ -24,7 +24,6 @@ namespace ProtoTestTool.ScriptContract
         /// </summary>
         /// <param name="packet"></param>
         /// <returns>The raw bytes to send over the wire.</returns>
-        //ReadOnlyMemory<byte> Encode(IMessage message);
         ReadOnlyMemory<byte> Encode(Packet packet);
     }
 }
