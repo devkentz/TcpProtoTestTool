@@ -1,13 +1,18 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using ProtoTestTool.Services;
-using System.Linq;
-using System.Windows.Controls;
 
 namespace ProtoTestTool
 {
@@ -17,7 +22,12 @@ namespace ProtoTestTool
         private readonly string _workspaceRoot;
         private readonly ScriptLoader _scriptLoader;
         private readonly Dictionary<string, Microsoft.Web.WebView2.Wpf.WebView2> _editors = new();
+        private readonly HashSet<string> _dirtyFiles = new();
+        private readonly Dictionary<string, List<DiagnosticDto>> _allDiagnostics = new();
         private RoslynIntelliSenseService? _intelliSense;
+        private FileSystemWatcher? _fileWatcher;
+
+        public event Action? OnRequestCompilation;
 
         public ScriptEditorWindow(string workspacePath, ScriptLoader scriptLoader)
         {
@@ -33,7 +43,10 @@ namespace ProtoTestTool
         {
             await InitializeIntelliSenseAsync();
             await InitializeEditorsAsync();
+            InitializeFileExplorer();
         }
+
+        // ========== IntelliSense ==========
 
         private async Task InitializeIntelliSenseAsync()
         {
@@ -41,13 +54,10 @@ namespace ProtoTestTool
             {
                 _intelliSense = new RoslynIntelliSenseService();
 
-                // Collect additional references from Libs folder
-                var additionalRefs = new System.Collections.Generic.List<string>();
+                var additionalRefs = new List<string>();
                 var libsDir = Path.Combine(_workspacePath, "Libs");
                 if (Directory.Exists(libsDir))
-                {
                     additionalRefs.AddRange(Directory.GetFiles(libsDir, "*.dll", SearchOption.AllDirectories));
-                }
 
                 await _intelliSense.InitializeAsync(_workspaceRoot, additionalRefs);
                 AppendLog("IntelliSense initialized.", Brushes.Green);
@@ -58,26 +68,23 @@ namespace ProtoTestTool
             }
         }
 
+        public async Task RefreshIntelliSenseAsync()
+        {
+            await InitializeIntelliSenseAsync();
+        }
+
+        // ========== Editor Initialization ==========
+
         private async Task InitializeEditorsAsync()
         {
-            // Cleanup existing dynamic UI elements
-            var staticTabs = new[] { "PacketLoader.cs", "PacketHeader.cs", "PacketCodec.cs" };
-            
-            // Remove dynamic tabs
-            var tabsToRemove = TabsPanel.Children.OfType<RadioButton>()
-                .Where(t => t.Tag != null && !staticTabs.Contains(t.Tag.ToString()))
-                .ToList();
-            foreach (var tab in tabsToRemove) TabsPanel.Children.Remove(tab);
-
-            // Remove dynamic editors
-            var editorsToRemove = EditorsGrid.Children.OfType<Microsoft.Web.WebView2.Wpf.WebView2>()
-                .Where(w => w.Name != "LoaderEditor" && w.Name != "HeaderEditor" && w.Name != "CodecEditor")
-                .ToList();
-            foreach (var editor in editorsToRemove) 
-            {
-                editor.Dispose(); // Ensure WebView2 resources are released
-                EditorsGrid.Children.Remove(editor);
-            }
+            // Clear dynamic tabs and editors
+            TabsPanel.Children.Clear();
+            foreach (var editor in _editors.Values)
+                editor.Dispose();
+            foreach (var child in EditorsGrid.Children.OfType<Microsoft.Web.WebView2.Wpf.WebView2>().ToList())
+                EditorsGrid.Children.Remove(child);
+            _editors.Clear();
+            _dirtyFiles.Clear();
 
             var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
             if (!File.Exists(editorPath))
@@ -87,55 +94,40 @@ namespace ProtoTestTool
             }
             var editorUrl = new Uri(editorPath).AbsoluteUri;
 
-            _editors.Clear();
-            _editors["PacketLoader.cs"] = LoaderEditor;
-            _editors["PacketHeader.cs"] = HeaderEditor;
-            _editors["PacketCodec.cs"] = CodecEditor;
+            if (!Directory.Exists(_workspacePath)) return;
 
-            // Initialize Static Editors
-            await InitializeWebView(LoaderEditor, editorUrl, "PacketLoader.cs");
-            await InitializeWebView(HeaderEditor, editorUrl, "PacketHeader.cs");
-            await InitializeWebView(CodecEditor, editorUrl, "PacketCodec.cs");
+            var files = Directory.GetFiles(_workspacePath, "*.cs");
+            bool isFirst = true;
 
-            // Scan for other .cs files
-            if (Directory.Exists(_workspacePath))
+            foreach (var file in files)
             {
-                var files = Directory.GetFiles(_workspacePath, "*.cs");
-                foreach (var file in files)
-                {
-                    var fileName = Path.GetFileName(file);
-                    if (!_editors.ContainsKey(fileName))
-                    {
-                        await AddDynamicTab(fileName, editorUrl);
-                    }
-                }
+                var fileName = Path.GetFileName(file);
+                await AddEditorTab(fileName, editorUrl, isFirst);
+                isFirst = false;
             }
 
             SetStatus("Ready");
         }
 
-        private async Task AddDynamicTab(string fileName, string editorUrl)
+        private async Task AddEditorTab(string fileName, string editorUrl, bool isSelected = false)
         {
-            // 1. Create Webview
             var webView = new Microsoft.Web.WebView2.Wpf.WebView2
             {
-                Visibility = Visibility.Hidden
+                Visibility = isSelected ? Visibility.Visible : Visibility.Hidden
             };
             EditorsGrid.Children.Add(webView);
             _editors[fileName] = webView;
 
-            // 2. Create Tab Button
             var radio = new RadioButton
             {
                 Content = Path.GetFileNameWithoutExtension(fileName),
                 Tag = fileName,
                 Style = (Style)FindResource("EditorTabStyle"),
-                IsChecked = false
+                IsChecked = isSelected
             };
             radio.Checked += Tab_Checked;
             TabsPanel.Children.Add(radio);
 
-            // 3. Init
             await InitializeWebView(webView, editorUrl, fileName);
         }
 
@@ -150,170 +142,421 @@ namespace ProtoTestTool
                     try
                     {
                         await HandleWebMessageAsync(webView, e.WebMessageAsJson, fileName);
-
                         if (e.WebMessageAsJson.Contains("\"type\":\"ready\""))
-                        {
                             tcs.TrySetResult(true);
-                        }
                     }
                     catch (Exception ex)
                     {
-                        AppendLog($"[Editor Msg Error] {ex.Message}", Brushes.Red);
+                        System.Diagnostics.Debug.WriteLine($"[Editor Msg Error] {ex.Message}");
                     }
                 };
 
                 webView.Source = new Uri(url);
 
-                var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(3000));
+                var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000));
                 if (completedTask == tcs.Task)
                 {
                     await LoadFileIntoEditor(webView, fileName);
                 }
                 else
                 {
-                    AppendLog($"[Editor] Timeout waiting for editor ready: {fileName}", Brushes.Orange);
+                    AppendLog($"[Editor] Timeout for: {fileName}", Brushes.Orange);
                     await LoadFileIntoEditor(webView, fileName);
                 }
             }
             catch (Exception ex)
             {
-                AppendLog($"Failed to initialize editor for {fileName}: {ex.Message}", Brushes.Red);
+                AppendLog($"Failed to init editor for {fileName}: {ex.Message}", Brushes.Red);
             }
-        }
-
-        private async Task HandleWebMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                if (!root.TryGetProperty("type", out var typeProp))
-                    return;
-
-                var type = typeProp.GetString();
-                System.Diagnostics.Debug.WriteLine($"[WebMessage] Type: {type}, File: {fileName}");
-
-                switch (type)
-                {
-                    case "requestCompletions":
-                        await HandleCompletionRequestAsync(webView, root, fileName);
-                        break;
-
-                    case "requestSignatureHelp":
-                        await HandleSignatureHelpRequestAsync(webView, root, fileName);
-                        break;
-
-                    case "requestDiagnostics":
-                        await HandleDiagnosticsRequestAsync(webView, root, fileName);
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[WebMessage Error] {ex.Message}");
-            }
-        }
-
-        private async Task HandleCompletionRequestAsync(
-            Microsoft.Web.WebView2.Wpf.WebView2 webView,
-            JsonElement root,
-            string fileName)
-        {
-            if (_intelliSense == null)
-            {
-                System.Diagnostics.Debug.WriteLine("[Completion] IntelliSense is null!");
-                return;
-            }
-
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-
-            System.Diagnostics.Debug.WriteLine($"[Completion] File: {fileName}, Position: {position}, ContentLen: {content.Length}");
-
-            // Update document in Roslyn workspace
-            _intelliSense.UpdateDocument(fileName, content);
-
-            // Get completions
-            var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
-
-            System.Diagnostics.Debug.WriteLine($"[Completion] Got {completions.Count} items");
-
-            // Send back to Monaco
-            var jsonResult = JsonSerializer.Serialize(completions);
-            await webView.ExecuteScriptAsync($"setCompletions({jsonResult})");
-        }
-
-        private async Task HandleSignatureHelpRequestAsync(
-            Microsoft.Web.WebView2.Wpf.WebView2 webView,
-            JsonElement root,
-            string fileName)
-        {
-            if (_intelliSense == null) return;
-
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-
-            _intelliSense.UpdateDocument(fileName, content);
-
-            var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
-
-            var jsonResult = signatureHelp != null
-                ? JsonSerializer.Serialize(signatureHelp)
-                : "null";
-            await webView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
-        }
-
-        private async Task HandleDiagnosticsRequestAsync(
-            Microsoft.Web.WebView2.Wpf.WebView2 webView,
-            JsonElement root,
-            string fileName)
-        {
-            if (_intelliSense == null) return;
-
-            var content = root.GetProperty("content").GetString() ?? "";
-
-            _intelliSense.UpdateDocument(fileName, content);
-
-            var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
-
-            var jsonResult = JsonSerializer.Serialize(diagnostics);
-            await webView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
         }
 
         private async Task LoadFileIntoEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string fileName)
         {
-            var path = Path.Combine(_workspacePath, fileName);
-
-            // Set file name for Monaco
             var safeFileName = JsonSerializer.Serialize(fileName);
             await webView.ExecuteScriptAsync($"setFileName({safeFileName})");
 
+            var path = Path.Combine(_workspacePath, fileName);
             if (File.Exists(path))
             {
                 var content = await File.ReadAllTextAsync(path);
                 var safeContent = JsonSerializer.Serialize(content);
                 await webView.ExecuteScriptAsync($"setContent({safeContent})");
-
-                // Initialize document in Roslyn
                 _intelliSense?.UpdateDocument(fileName, content);
             }
         }
 
+        // ========== Message Handler ==========
+
+        private async Task HandleWebMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("type", out var typeProp)) return;
+            var type = typeProp.GetString();
+
+            switch (type)
+            {
+                case "requestCompletions":
+                    await HandleCompletionRequestAsync(webView, root, fileName);
+                    break;
+                case "requestSignatureHelp":
+                    await HandleSignatureHelpRequestAsync(webView, root, fileName);
+                    break;
+                case "requestDiagnostics":
+                    await HandleDiagnosticsRequestAsync(webView, root, fileName);
+                    break;
+                case "requestHover":
+                    await HandleHoverRequestAsync(webView, root, fileName);
+                    break;
+                case "requestDefinition":
+                    await HandleDefinitionRequestAsync(webView, root, fileName);
+                    break;
+                case "requestReferences":
+                    await HandleReferencesRequestAsync(webView, root, fileName);
+                    break;
+                case "requestCodeActions":
+                    await HandleCodeActionsRequestAsync(webView, root, fileName);
+                    break;
+                case "applyCodeAction":
+                    await HandleApplyCodeActionAsync(webView, root, fileName);
+                    break;
+                case "requestFormatting":
+                    await HandleFormattingRequestAsync(webView, root, fileName);
+                    break;
+                case "requestRename":
+                    await HandleRenameRequestAsync(webView, root, fileName);
+                    break;
+                case "requestSymbols":
+                    await HandleSymbolsRequestAsync(webView, root, fileName);
+                    break;
+                case "command":
+                    HandleCommand(root);
+                    break;
+                case "cursorPosition":
+                    HandleCursorPosition(root);
+                    break;
+                case "contentChanged":
+                    HandleContentChanged(root);
+                    break;
+                case "navigateToFile":
+                    await HandleNavigateToFile(root);
+                    break;
+                case "breakpoint":
+                    HandleBreakpointToggle(root);
+                    break;
+            }
+        }
+
+        // ========== Roslyn Request Handlers ==========
+
+        private async Task HandleCompletionRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
+            var jsonResult = JsonSerializer.Serialize(completions);
+            await webView.ExecuteScriptAsync($"setCompletions({jsonResult})");
+        }
+
+        private async Task HandleSignatureHelpRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
+            var jsonResult = signatureHelp != null ? JsonSerializer.Serialize(signatureHelp) : "null";
+            await webView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
+        }
+
+        private async Task HandleDiagnosticsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
+            _allDiagnostics[fileName] = diagnostics;
+            var jsonResult = JsonSerializer.Serialize(diagnostics);
+            await webView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
+            Dispatcher.Invoke(UpdateProblemsPanel);
+        }
+
+        private async Task HandleHoverRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var hover = await _intelliSense.GetHoverAsync(fileName, position);
+            var jsonResult = hover != null ? JsonSerializer.Serialize(hover) : "null";
+            await webView.ExecuteScriptAsync($"setHover({jsonResult})");
+        }
+
+        private async Task HandleDefinitionRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var definition = await _intelliSense.GetDefinitionAsync(fileName, position);
+            var jsonResult = definition != null ? JsonSerializer.Serialize(definition) : "null";
+            await webView.ExecuteScriptAsync($"setDefinition({jsonResult})");
+        }
+
+        private async Task HandleReferencesRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var references = await _intelliSense.GetReferencesAsync(fileName, position);
+            var jsonResult = JsonSerializer.Serialize(references);
+            await webView.ExecuteScriptAsync($"setReferences({jsonResult})");
+        }
+
+        private async Task HandleCodeActionsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var startPos = root.GetProperty("startPosition").GetInt32();
+            var endPos = root.GetProperty("endPosition").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var actions = await _intelliSense.GetCodeActionsAsync(fileName, startPos, endPos);
+            var jsonResult = JsonSerializer.Serialize(actions);
+            await webView.ExecuteScriptAsync($"setCodeActions({jsonResult})");
+        }
+
+        private async Task HandleApplyCodeActionAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var actionIndex = root.GetProperty("actionIndex").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var result = await _intelliSense.ApplyCodeActionAsync(fileName, actionIndex);
+            if (result != null)
+            {
+                var safeContent = JsonSerializer.Serialize(result.NewContent);
+                await webView.ExecuteScriptAsync($"setContent({safeContent})");
+            }
+        }
+
+        private async Task HandleFormattingRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var edits = await _intelliSense.FormatDocumentAsync(fileName);
+            var jsonResult = JsonSerializer.Serialize(edits);
+            await webView.ExecuteScriptAsync($"setFormatting({jsonResult})");
+        }
+
+        private async Task HandleRenameRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var newName = root.GetProperty("newName").GetString() ?? "";
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var result = await _intelliSense.RenameSymbolAsync(fileName, position, newName);
+            var jsonResult = result != null ? JsonSerializer.Serialize(result) : "{ \"edits\": [] }";
+            await webView.ExecuteScriptAsync($"setRenameEdits({jsonResult})");
+
+            // Apply cross-file edits
+            if (result != null)
+            {
+                foreach (var fileEdit in result.Edits.Where(e => e.FileName != fileName))
+                {
+                    if (_editors.TryGetValue(fileEdit.FileName, out var otherEditor))
+                    {
+                        var editsJson = JsonSerializer.Serialize(fileEdit.TextEdits);
+                        await otherEditor.ExecuteScriptAsync($"applyEdits({editsJson})");
+                        MarkDirty(fileEdit.FileName);
+                    }
+                }
+            }
+        }
+
+        private async Task HandleSymbolsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var symbols = await _intelliSense.GetDocumentSymbolsAsync(fileName);
+            var jsonResult = JsonSerializer.Serialize(symbols);
+            await webView.ExecuteScriptAsync($"setDocumentSymbols({jsonResult})");
+        }
+
+        // ========== Command / UI Handlers ==========
+
+        private void HandleCommand(JsonElement root)
+        {
+            var command = root.GetProperty("command").GetString();
+            Dispatcher.Invoke(() =>
+            {
+                switch (command)
+                {
+                    case "save":
+                        _ = SaveCurrentFileAsync();
+                        break;
+                    case "saveAll":
+                        _ = SaveAllFilesAsync();
+                        break;
+                    case "build":
+                        BuildBtn_Click(this, new RoutedEventArgs());
+                        break;
+                    case "searchFiles":
+                        SearchToggle.IsChecked = true;
+                        SearchTextBox.Focus();
+                        break;
+                    case "closeTab":
+                        CloseCurrentTab();
+                        break;
+                }
+            });
+        }
+
+        private void HandleCursorPosition(JsonElement root)
+        {
+            var line = root.GetProperty("line").GetInt32();
+            var column = root.GetProperty("column").GetInt32();
+            Dispatcher.Invoke(() => CursorPositionText.Text = $"Ln {line}, Col {column}");
+        }
+
+        private void HandleContentChanged(JsonElement root)
+        {
+            if (root.TryGetProperty("fileName", out var fn))
+            {
+                var fileName = fn.GetString();
+                if (!string.IsNullOrEmpty(fileName))
+                    Dispatcher.Invoke(() => MarkDirty(fileName));
+            }
+        }
+
+        private async Task HandleNavigateToFile(JsonElement root)
+        {
+            var fileName = root.GetProperty("fileName").GetString() ?? "";
+            var line = root.GetProperty("line").GetInt32();
+            var column = root.GetProperty("column").GetInt32();
+
+            await Dispatcher.InvokeAsync(async () =>
+            {
+                await OpenFileAndNavigate(fileName, line, column);
+            });
+        }
+
+        private void HandleBreakpointToggle(JsonElement root)
+        {
+            // Store breakpoint info for debugging phase
+            var line = root.GetProperty("line").GetInt32();
+            var enabled = root.GetProperty("enabled").GetBoolean();
+            System.Diagnostics.Debug.WriteLine($"[Breakpoint] Line {line}, Enabled: {enabled}");
+        }
+
+        // ========== Tab Management ==========
+
         private void Tab_Checked(object sender, RoutedEventArgs e)
         {
-            var button = sender as RadioButton;
-            if (button == null || button.Tag == null) return;
-
+            if (sender is not RadioButton button || button.Tag == null) return;
             string fileName = button.Tag.ToString()!;
 
             foreach (var kvp in _editors)
             {
-                var view = kvp.Value;
-                bool isTarget = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase);
-                view.Visibility = isTarget ? Visibility.Visible : Visibility.Hidden;
+                kvp.Value.Visibility = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Hidden;
             }
         }
+
+        private void CloseTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag == null) return;
+            var fileName = btn.Tag.ToString()!;
+            CloseTab(fileName);
+        }
+
+        private void CloseTab(string fileName)
+        {
+            if (_dirtyFiles.Contains(fileName))
+            {
+                var result = MessageBox.Show(
+                    $"'{fileName}' has unsaved changes. Save before closing?",
+                    "Unsaved Changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Cancel) return;
+                if (result == MessageBoxResult.Yes) _ = SaveFileAsync(fileName);
+            }
+
+            if (_editors.TryGetValue(fileName, out var editor))
+            {
+                editor.Dispose();
+                EditorsGrid.Children.Remove(editor);
+                _editors.Remove(fileName);
+            }
+
+            var tab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
+            if (tab != null) TabsPanel.Children.Remove(tab);
+
+            _dirtyFiles.Remove(fileName);
+
+            // Select next tab
+            var firstTab = TabsPanel.Children.OfType<RadioButton>().FirstOrDefault();
+            if (firstTab != null) firstTab.IsChecked = true;
+        }
+
+        private void CloseCurrentTab()
+        {
+            var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.IsChecked == true);
+            if (activeTab?.Tag != null)
+                CloseTab(activeTab.Tag.ToString()!);
+        }
+
+        private void MarkDirty(string fileName)
+        {
+            if (_dirtyFiles.Add(fileName))
+            {
+                var tab = TabsPanel.Children.OfType<RadioButton>()
+                    .FirstOrDefault(t => t.Tag?.ToString() == fileName);
+                if (tab != null)
+                    tab.Content = Path.GetFileNameWithoutExtension(fileName) + " \u25cf";
+            }
+        }
+
+        private void MarkClean(string fileName)
+        {
+            _dirtyFiles.Remove(fileName);
+            var tab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
+            if (tab != null)
+                tab.Content = Path.GetFileNameWithoutExtension(fileName);
+        }
+
+        private async Task OpenFileAndNavigate(string fileName, int line, int column)
+        {
+            if (!_editors.ContainsKey(fileName))
+            {
+                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
+                var editorUrl = new Uri(editorPath).AbsoluteUri;
+                await AddEditorTab(fileName, editorUrl);
+            }
+
+            // Select tab
+            var tab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
+            if (tab != null) tab.IsChecked = true;
+
+            // Navigate to position
+            if (_editors.TryGetValue(fileName, out var editor))
+            {
+                await Task.Delay(100); // Wait for tab switch
+                await editor.ExecuteScriptAsync($"revealPosition({line}, {column})");
+            }
+        }
+
+        // ========== File Operations ==========
 
         private async Task<string> GetEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
         {
@@ -322,86 +565,286 @@ namespace ProtoTestTool
                 var result = await webView.ExecuteScriptAsync("getContent()");
                 return JsonSerializer.Deserialize<string>(result) ?? string.Empty;
             }
-            catch (Exception ex)
+            catch
             {
-                AppendLog($"Error getting content: {ex.Message}", Brushes.Red);
                 return string.Empty;
             }
+        }
+
+        private async Task SaveCurrentFileAsync()
+        {
+            var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.IsChecked == true);
+            if (activeTab?.Tag != null)
+                await SaveFileAsync(activeTab.Tag.ToString()!);
+        }
+
+        private async Task SaveFileAsync(string fileName)
+        {
+            if (!_editors.TryGetValue(fileName, out var editor)) return;
+
+            var code = await GetEditorContent(editor);
+            if (string.IsNullOrWhiteSpace(code)) return;
+
+            var path = Path.Combine(_workspacePath, fileName);
+            await File.WriteAllTextAsync(path, code);
+            MarkClean(fileName);
         }
 
         private async Task SaveAllFilesAsync()
         {
             foreach (var kvp in _editors)
             {
-                var fileName = kvp.Key;
-                var view = kvp.Value;
-                
-                var code = await GetEditorContent(view);
+                var code = await GetEditorContent(kvp.Value);
                 if (string.IsNullOrWhiteSpace(code)) continue;
 
-                var path = Path.Combine(_workspacePath, fileName);
+                var path = Path.Combine(_workspacePath, kvp.Key);
                 await File.WriteAllTextAsync(path, code);
+                MarkClean(kvp.Key);
             }
 
             AppendLog($"Saved {_editors.Count} files.", Brushes.Gray);
         }
 
-        private async void SaveBtn_Click(object sender, RoutedEventArgs e)
+        // ========== File Explorer ==========
+
+        private void InitializeFileExplorer()
         {
-            try
+            RefreshFileTree();
+
+            if (Directory.Exists(_workspacePath))
             {
-                await SaveAllFilesAsync();
-                SetStatus("Saved");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Save Error: {ex.Message}", Brushes.Red);
+                _fileWatcher = new FileSystemWatcher(_workspacePath, "*.cs")
+                {
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
+                    EnableRaisingEvents = true
+                };
+                _fileWatcher.Created += (s, e) => Dispatcher.Invoke(RefreshFileTree);
+                _fileWatcher.Deleted += (s, e) => Dispatcher.Invoke(RefreshFileTree);
+                _fileWatcher.Renamed += (s, e) => Dispatcher.Invoke(RefreshFileTree);
             }
         }
-        
-        // Add Handlers
-        private void AddProxyInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ProxyInterceptor", "PacketInterceptor_Proxy");
-        private void AddClientInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ClientInterceptor", "PacketInterceptor_Client");
-        private void AddReplayInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ReplayInterceptor", "PacketInterceptor_Replay");
 
-        private async void CreateInterceptor(string baseName, string templateType)
+        private void RefreshFileTree()
         {
-            // Simple unique numbering
-            string fileName = $"{baseName}.cs";
+            FileTreeView.Items.Clear();
+
+            if (!Directory.Exists(_workspacePath)) return;
+
+            var scriptsItem = new TreeViewItem
+            {
+                Header = "Scripts",
+                IsExpanded = true,
+                Foreground = Brushes.LightGray
+            };
+
+            foreach (var file in Directory.GetFiles(_workspacePath, "*.cs").OrderBy(f => f))
+            {
+                var item = new TreeViewItem
+                {
+                    Header = Path.GetFileName(file),
+                    Tag = file,
+                    Foreground = Brushes.LightGray
+                };
+                scriptsItem.Items.Add(item);
+            }
+
+            FileTreeView.Items.Add(scriptsItem);
+
+            // Libs folder (read-only indicator)
+            var libsDir = Path.Combine(_workspacePath, "Libs");
+            if (Directory.Exists(libsDir))
+            {
+                var libsItem = new TreeViewItem
+                {
+                    Header = "Libs",
+                    IsExpanded = false,
+                    Foreground = Brushes.Gray
+                };
+
+                foreach (var file in Directory.GetFiles(libsDir, "*.dll").OrderBy(f => f))
+                {
+                    libsItem.Items.Add(new TreeViewItem
+                    {
+                        Header = Path.GetFileName(file),
+                        Foreground = Brushes.Gray
+                    });
+                }
+
+                FileTreeView.Items.Add(libsItem);
+            }
+        }
+
+        private async void FileTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (FileTreeView.SelectedItem is not TreeViewItem item || item.Tag == null) return;
+            var filePath = item.Tag.ToString()!;
+            var fileName = Path.GetFileName(filePath);
+
+            await OpenFileAndNavigate(fileName, 1, 1);
+        }
+
+        private async void NewFile_Click(object sender, RoutedEventArgs e)
+        {
+            var fileName = "NewScript.cs";
             int count = 1;
             while (File.Exists(Path.Combine(_workspacePath, fileName)))
+                fileName = $"NewScript{count++}.cs";
+
+            var template = "using System;\n\nnamespace Scripts\n{\n    public class NewScript\n    {\n    }\n}\n";
+            await File.WriteAllTextAsync(Path.Combine(_workspacePath, fileName), template);
+
+            var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
+            await AddEditorTab(fileName, new Uri(editorPath).AbsoluteUri, false);
+
+            var tab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
+            if (tab != null) tab.IsChecked = true;
+
+            RefreshFileTree();
+            AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
+        }
+
+        // ========== Search ==========
+
+        private void SearchBtn_Click(object sender, RoutedEventArgs e) => PerformSearch();
+
+        private void SearchTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter) PerformSearch();
+        }
+
+        private void PerformSearch()
+        {
+            var query = SearchTextBox.Text?.Trim();
+            if (string.IsNullOrEmpty(query) || !Directory.Exists(_workspacePath)) return;
+
+            SearchResultsList.Items.Clear();
+
+            foreach (var file in Directory.GetFiles(_workspacePath, "*.cs"))
             {
-                fileName = $"{baseName}{count++}.cs";
+                var lines = File.ReadAllLines(file);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (lines[i].Contains(query, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SearchResultsList.Items.Add(new SearchResultItem
+                        {
+                            FileName = Path.GetFileName(file),
+                            Line = i + 1,
+                            Preview = lines[i].Trim(),
+                            FullPath = file
+                        });
+                    }
+                }
+            }
+        }
+
+        private async void ReplaceAllBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var search = SearchTextBox.Text?.Trim();
+            var replace = ReplaceTextBox.Text ?? "";
+            if (string.IsNullOrEmpty(search)) return;
+
+            int totalReplacements = 0;
+            foreach (var kvp in _editors)
+            {
+                var content = await GetEditorContent(kvp.Value);
+                if (content.Contains(search, StringComparison.OrdinalIgnoreCase))
+                {
+                    var newContent = Regex.Replace(content, Regex.Escape(search), replace, RegexOptions.IgnoreCase);
+                    var safeContent = JsonSerializer.Serialize(newContent);
+                    await kvp.Value.ExecuteScriptAsync($"setContent({safeContent})");
+                    MarkDirty(kvp.Key);
+                    totalReplacements++;
+                }
             }
 
-            try
+            AppendLog($"Replaced in {totalReplacements} file(s).", Brushes.DeepSkyBlue);
+        }
+
+        private async void SearchResult_DoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (SearchResultsList.SelectedItem is not SearchResultItem item) return;
+            await OpenFileAndNavigate(item.FileName, item.Line, 1);
+        }
+
+        // ========== Sidebar Toggle ==========
+
+        private void SidebarToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton toggle) return;
+
+            // Uncheck other toggles
+            if (toggle == ExplorerToggle && toggle.IsChecked == true)
+                SearchToggle.IsChecked = false;
+            else if (toggle == SearchToggle && toggle.IsChecked == true)
+                ExplorerToggle.IsChecked = false;
+
+            bool anyChecked = ExplorerToggle.IsChecked == true || SearchToggle.IsChecked == true;
+            SidebarPanel.Visibility = anyChecked ? Visibility.Visible : Visibility.Collapsed;
+            ExplorerPanel.Visibility = ExplorerToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            SearchPanel.Visibility = SearchToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ========== Bottom Panel ==========
+
+        private void PanelTab_Checked(object sender, RoutedEventArgs e)
+        {
+            if (ScriptLogBox == null) return; // Not yet loaded
+
+            ScriptLogBox.Visibility = OutputTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            ProblemsListView.Visibility = ProblemsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            DebugConsolePanel.Visibility = DebugConsoleTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UpdateProblemsPanel()
+        {
+            ProblemsListView.Items.Clear();
+            int errors = 0, warnings = 0;
+
+            foreach (var kvp in _allDiagnostics)
             {
-                var template = ScriptTemplateFactory.GetTemplate(templateType);
-                var path = Path.Combine(_workspacePath, fileName);
-                await File.WriteAllTextAsync(path, template);
+                foreach (var diag in kvp.Value)
+                {
+                    ProblemsListView.Items.Add(new ProblemItem
+                    {
+                        Severity = diag.Severity == 8 ? "Error" : "Warning",
+                        Message = diag.Message,
+                        FileName = kvp.Key,
+                        Line = diag.StartLine
+                    });
 
-                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-                var editorUrl = new Uri(editorPath).AbsoluteUri;
-
-                await AddDynamicTab(fileName, editorUrl);
-                
-                // Select the new tab
-                var newTab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
-                if (newTab != null) newTab.IsChecked = true;
-
-                AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
+                    if (diag.Severity == 8) errors++;
+                    else warnings++;
+                }
             }
-            catch (Exception ex)
-            {
-                AppendLog($"Create File Error: {ex.Message}", Brushes.Red);
-            }
+
+            ErrorCountText.Text = errors.ToString();
+            WarningCountText.Text = warnings.ToString();
+            ProblemCountText.Text = errors + warnings > 0 ? $"({errors + warnings})" : "";
+        }
+
+        private async void ProblemItem_DoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ProblemsListView.SelectedItem is not ProblemItem item) return;
+            await OpenFileAndNavigate(item.FileName, item.Line, 1);
+        }
+
+        // ========== Toolbar Actions ==========
+
+        private async void SaveBtn_Click(object sender, RoutedEventArgs e)
+        {
+            await SaveAllFilesAsync();
+            SetStatus("Saved");
         }
 
         private async void ReloadBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (MessageBox.Show("Discard changes and reload from disk?", "Reload", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            if (MessageBox.Show("Discard changes and reload from disk?", "Reload",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 await InitializeEditorsAsync();
+                RefreshFileTree();
                 AppendLog("Reloaded from disk.", Brushes.DeepSkyBlue);
             }
         }
@@ -416,7 +859,6 @@ namespace ProtoTestTool
             {
                 await SaveAllFilesAsync();
                 AppendLog("Requesting Compilation...", Brushes.Gray);
-
                 OnRequestCompilation?.Invoke();
             }
             catch (Exception ex)
@@ -430,38 +872,72 @@ namespace ProtoTestTool
             }
         }
 
+        private void DebugBtn_Click(object sender, RoutedEventArgs e)
+        {
+            // Placeholder for Phase 5 debugging
+            AppendLog("[Debug] Debugging not yet implemented.", Brushes.Orange);
+        }
+
         private void PackagesBtn_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_workspacePath)) return;
-
-            var window = new NuGetWindow(_workspacePath);
-            window.Owner = this;
+            var window = new NuGetWindow(_workspacePath) { Owner = this };
             window.ShowDialog();
         }
 
-        public Task UpdateCompletionsAsync(string json)
+        // ========== Interceptor Creation ==========
+
+        private void AddProxyInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ProxyInterceptor", "PacketInterceptor_Proxy");
+        private void AddClientInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ClientInterceptor", "PacketInterceptor_Client");
+        private void AddReplayInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ReplayInterceptor", "PacketInterceptor_Replay");
+
+        private async void CreateInterceptor(string baseName, string templateType)
         {
-            // Legacy - now handled by Roslyn IntelliSense
-            // Keep for compatibility if needed
-            return Task.CompletedTask;
+            string fileName = $"{baseName}.cs";
+            int count = 1;
+            while (File.Exists(Path.Combine(_workspacePath, fileName)))
+                fileName = $"{baseName}{count++}.cs";
+
+            try
+            {
+                var template = ScriptTemplateFactory.GetTemplate(templateType);
+                await File.WriteAllTextAsync(Path.Combine(_workspacePath, fileName), template);
+
+                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
+                await AddEditorTab(fileName, new Uri(editorPath).AbsoluteUri);
+
+                var newTab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
+                if (newTab != null) newTab.IsChecked = true;
+
+                RefreshFileTree();
+                AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Create File Error: {ex.Message}", Brushes.Red);
+            }
         }
 
-        public async Task RefreshIntelliSenseAsync()
-        {
-            // Reinitialize IntelliSense (e.g., after Proto recompilation)
-            await InitializeIntelliSenseAsync();
-        }
+        // ========== Debug Controls (Phase 5 placeholders) ==========
 
-        public event Action? OnRequestCompilation;
+        private void ContinueBtn_Click(object sender, RoutedEventArgs e) { }
+        private void StepOverBtn_Click(object sender, RoutedEventArgs e) { }
+        private void StopDebugBtn_Click(object sender, RoutedEventArgs e) { }
+
+        // ========== Legacy Compatibility ==========
+
+        public Task UpdateCompletionsAsync(string json) => Task.CompletedTask;
+
+        // ========== Logging ==========
 
         public void AppendLog(string message, Brush color)
         {
             Dispatcher.Invoke(() =>
             {
                 var paragraph = new System.Windows.Documents.Paragraph();
-                var run = new System.Windows.Documents.Run($"[{DateTime.Now:HH:mm:ss}] {message}") 
-                { 
-                    Foreground = color 
+                var run = new System.Windows.Documents.Run($"[{DateTime.Now:HH:mm:ss}] {message}")
+                {
+                    Foreground = color
                 };
                 paragraph.Inlines.Add(run);
                 ScriptLogBox.Document.Blocks.Add(paragraph);
@@ -473,5 +949,25 @@ namespace ProtoTestTool
         {
             Dispatcher.Invoke(() => StatusText.Text = status);
         }
+    }
+
+    // ========== Data Models ==========
+
+    public class SearchResultItem
+    {
+        public string FileName { get; set; } = "";
+        public int Line { get; set; }
+        public string Preview { get; set; } = "";
+        public string FullPath { get; set; } = "";
+
+        public override string ToString() => $"{FileName}:{Line}  {Preview}";
+    }
+
+    public class ProblemItem
+    {
+        public string Severity { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public int Line { get; set; }
     }
 }

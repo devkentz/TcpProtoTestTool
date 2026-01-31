@@ -6,8 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monaco Editor</title>
     <style>
-        html,
-        body {
+        html, body {
             height: 100%;
             margin: 0;
             padding: 0;
@@ -18,6 +17,32 @@
         #container {
             width: 100%;
             height: 100%;
+        }
+
+        /* Breakpoint glyph */
+        .breakpoint-glyph {
+            background: #e51400;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 5px;
+            margin-top: 3px;
+        }
+
+        /* Current debug line highlight */
+        .debug-line-highlight {
+            background-color: rgba(255, 255, 0, 0.15);
+        }
+
+        .debug-line-glyph {
+            background: #ffcc00;
+            width: 0;
+            height: 0;
+            border-left: 8px solid #ffcc00;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+            margin-left: 3px;
+            margin-top: 2px;
         }
     </style>
 </head>
@@ -31,7 +56,6 @@
         });
     </script>
 
-    <!-- Load Monaco Editor from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <script>
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
@@ -40,15 +64,25 @@
         let currentFileName = '';
         let completionResolve = null;
         let signatureResolve = null;
+        let hoverResolve = null;
+        let definitionResolve = null;
+        let referencesResolve = null;
+        let codeActionsResolve = null;
+        let formattingResolve = null;
+        let renameResolve = null;
+        let symbolsResolve = null;
+        let breakpoints = new Set();
+        let breakpointDecorations = [];
+        let debugDecorations = [];
+        let pendingCodeActions = [];
 
         require(['vs/editor/editor.main'], function () {
-            // Register Completion Provider (Roslyn-based)
+
+            // ========== Completion Provider ==========
             monaco.languages.registerCompletionItemProvider('csharp', {
                 triggerCharacters: ['.', ' '],
-                provideCompletionItems: async function (model, position) {
+                provideCompletionItems: (model, position) => {
                     const offset = model.getOffsetAt(position);
-
-                    // Request completions from C#
                     return new Promise((resolve) => {
                         completionResolve = resolve;
                         postMessage({
@@ -57,24 +91,21 @@
                             position: offset,
                             content: model.getValue()
                         });
-
-                        // Timeout fallback
                         setTimeout(() => {
                             if (completionResolve) {
                                 completionResolve({ suggestions: [] });
                                 completionResolve = null;
                             }
-                        }, 2000);
+                        }, 3000);
                     });
                 }
             });
 
-            // Register Signature Help Provider
+            // ========== Signature Help Provider ==========
             monaco.languages.registerSignatureHelpProvider('csharp', {
                 signatureHelpTriggerCharacters: ['(', ','],
-                provideSignatureHelp: async function (model, position) {
+                provideSignatureHelp: (model, position) => {
                     const offset = model.getOffsetAt(position);
-
                     return new Promise((resolve) => {
                         signatureResolve = resolve;
                         postMessage({
@@ -83,40 +114,306 @@
                             position: offset,
                             content: model.getValue()
                         });
-
                         setTimeout(() => {
                             if (signatureResolve) {
                                 signatureResolve(null);
                                 signatureResolve = null;
                             }
-                        }, 2000);
+                        }, 3000);
                     });
                 }
             });
 
+            // ========== Hover Provider ==========
+            monaco.languages.registerHoverProvider('csharp', {
+                provideHover: (model, position) => {
+                    const offset = model.getOffsetAt(position);
+                    return new Promise((resolve) => {
+                        hoverResolve = resolve;
+                        postMessage({
+                            type: 'requestHover',
+                            fileName: currentFileName,
+                            position: offset,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (hoverResolve) {
+                                hoverResolve(null);
+                                hoverResolve = null;
+                            }
+                        }, 3000);
+                    });
+                }
+            });
+
+            // ========== Definition Provider (F12) ==========
+            monaco.languages.registerDefinitionProvider('csharp', {
+                provideDefinition: (model, position) => {
+                    const offset = model.getOffsetAt(position);
+                    return new Promise((resolve) => {
+                        definitionResolve = resolve;
+                        postMessage({
+                            type: 'requestDefinition',
+                            fileName: currentFileName,
+                            position: offset,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (definitionResolve) {
+                                definitionResolve(null);
+                                definitionResolve = null;
+                            }
+                        }, 3000);
+                    });
+                }
+            });
+
+            // ========== Reference Provider (Shift+F12) ==========
+            monaco.languages.registerReferenceProvider('csharp', {
+                provideReferences: (model, position, context) => {
+                    const offset = model.getOffsetAt(position);
+                    return new Promise((resolve) => {
+                        referencesResolve = resolve;
+                        postMessage({
+                            type: 'requestReferences',
+                            fileName: currentFileName,
+                            position: offset,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (referencesResolve) {
+                                referencesResolve([]);
+                                referencesResolve = null;
+                            }
+                        }, 5000);
+                    });
+                }
+            });
+
+            // ========== Code Action Provider (Ctrl+.) ==========
+            monaco.languages.registerCodeActionProvider('csharp', {
+                provideCodeActions: (model, range) => {
+                    const startOffset = model.getOffsetAt(range.getStartPosition());
+                    const endOffset = model.getOffsetAt(range.getEndPosition());
+                    return new Promise((resolve) => {
+                        codeActionsResolve = resolve;
+                        postMessage({
+                            type: 'requestCodeActions',
+                            fileName: currentFileName,
+                            startPosition: startOffset,
+                            endPosition: endOffset,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (codeActionsResolve) {
+                                codeActionsResolve({ actions: [], dispose: () => {} });
+                                codeActionsResolve = null;
+                            }
+                        }, 3000);
+                    });
+                }
+            });
+
+            // ========== Document Formatting Provider (Shift+Alt+F) ==========
+            monaco.languages.registerDocumentFormattingEditProvider('csharp', {
+                provideDocumentFormattingEdits: (model) => {
+                    return new Promise((resolve) => {
+                        formattingResolve = resolve;
+                        postMessage({
+                            type: 'requestFormatting',
+                            fileName: currentFileName,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (formattingResolve) {
+                                formattingResolve([]);
+                                formattingResolve = null;
+                            }
+                        }, 5000);
+                    });
+                }
+            });
+
+            // ========== Rename Provider (F2) ==========
+            monaco.languages.registerRenameProvider('csharp', {
+                provideRenameEdits: (model, position, newName) => {
+                    const offset = model.getOffsetAt(position);
+                    return new Promise((resolve) => {
+                        renameResolve = resolve;
+                        postMessage({
+                            type: 'requestRename',
+                            fileName: currentFileName,
+                            position: offset,
+                            newName: newName,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (renameResolve) {
+                                renameResolve({ edits: [] });
+                                renameResolve = null;
+                            }
+                        }, 5000);
+                    });
+                },
+                resolveRenameLocation: (model, position) => {
+                    const word = model.getWordAtPosition(position);
+                    if (!word) return { range: new monaco.Range(1,1,1,1), text: '', rejectReason: 'No symbol found' };
+                    return {
+                        range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
+                        text: word.word
+                    };
+                }
+            });
+
+            // ========== Document Symbol Provider (Ctrl+Shift+O) ==========
+            monaco.languages.registerDocumentSymbolProvider('csharp', {
+                provideDocumentSymbols: (model) => {
+                    return new Promise((resolve) => {
+                        symbolsResolve = resolve;
+                        postMessage({
+                            type: 'requestSymbols',
+                            fileName: currentFileName,
+                            content: model.getValue()
+                        });
+                        setTimeout(() => {
+                            if (symbolsResolve) {
+                                symbolsResolve([]);
+                                symbolsResolve = null;
+                            }
+                        }, 3000);
+                    });
+                }
+            });
+
+            // ========== Create Editor ==========
             editor = monaco.editor.create(document.getElementById('container'), {
-                value: "",
+                value: '',
                 language: 'csharp',
                 theme: 'vs-dark',
                 automaticLayout: true,
-                minimap: { enabled: true },
                 fontSize: 14,
                 fontFamily: 'Consolas, "Courier New", monospace',
+                minimap: { enabled: true },
                 scrollBeyondLastLine: false,
-                renderWhitespace: "none",
+                renderWhitespace: 'selection',
                 contextmenu: true,
-                quickSuggestions: {
-                    other: true,
-                    comments: false,
-                    strings: false
-                },
+                tabSize: 4,
+                insertSpaces: true,
+                lineNumbers: 'on',
+                glyphMargin: true,
+
+                // VS Code-like enhancements
+                bracketPairColorization: { enabled: true },
+                guides: { bracketPairs: true, indentation: true, highlightActiveIndentation: true },
+                stickyScroll: { enabled: true },
+                cursorBlinking: 'smooth',
+                cursorSmoothCaretAnimation: 'on',
+                smoothScrolling: true,
+                folding: true,
+                foldingHighlight: true,
+                showFoldingControls: 'always',
+                formatOnPaste: true,
+                formatOnType: true,
+                linkedEditing: true,
+                wordWrap: 'off',
+                mouseWheelZoom: true,
+                quickSuggestions: { other: true, comments: false, strings: false },
                 suggestOnTriggerCharacters: true,
-                parameterHints: { enabled: true }
+                parameterHints: { enabled: true },
+                suggest: {
+                    snippetsPreventQuickSuggestions: false,
+                    showMethods: true,
+                    showFunctions: true,
+                    showConstructors: true,
+                    showFields: true,
+                    showVariables: true,
+                    showClasses: true,
+                    showStructs: true,
+                    showInterfaces: true,
+                    showModules: true,
+                    showProperties: true,
+                    showEvents: true,
+                    showOperators: true,
+                    showUnits: true,
+                    showValues: true,
+                    showConstants: true,
+                    showEnumMembers: true,
+                    showKeywords: true,
+                    showWords: true,
+                    showColors: true,
+                    showFiles: true,
+                    showReferences: true,
+                    showFolders: true,
+                    showTypeParameters: true,
+                    showSnippets: true,
+                    showUsers: true,
+                    showIssues: true
+                },
+                lightbulb: { enabled: true },
+                inlayHints: { enabled: 'on' },
+                codeLens: true,
+                colorDecorators: true,
+                dropIntoEditor: { enabled: true },
+                find: {
+                    seedSearchStringFromSelection: 'always',
+                    autoFindInSelection: 'multiline',
+                    addExtraSpaceOnTop: true
+                },
+                unicodeHighlight: { ambiguousCharacters: true },
+                accessibilitySupport: 'auto',
+                padding: { top: 4, bottom: 4 }
             });
 
-            // Request diagnostics on content change (debounced)
+            // ========== Keyboard Shortcuts → WPF ==========
+            editor.addAction({
+                id: 'custom-save',
+                label: 'Save File',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+                run: () => postMessage({ type: 'command', command: 'save' })
+            });
+
+            editor.addAction({
+                id: 'custom-build',
+                label: 'Build & Run',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
+                run: () => postMessage({ type: 'command', command: 'build' })
+            });
+
+            editor.addAction({
+                id: 'custom-search-files',
+                label: 'Search in Files',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+                run: () => postMessage({ type: 'command', command: 'searchFiles' })
+            });
+
+            editor.addAction({
+                id: 'custom-save-all',
+                label: 'Save All Files',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS],
+                run: () => postMessage({ type: 'command', command: 'saveAll' })
+            });
+
+            editor.addAction({
+                id: 'custom-close-tab',
+                label: 'Close Tab',
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW],
+                run: () => postMessage({ type: 'command', command: 'closeTab' })
+            });
+
+            // ========== Cursor Position Tracking ==========
+            editor.onDidChangeCursorPosition((e) => {
+                postMessage({
+                    type: 'cursorPosition',
+                    line: e.position.lineNumber,
+                    column: e.position.column
+                });
+            });
+
+            // ========== Content Change → Dirty + Diagnostics ==========
             let diagnosticTimeout = null;
             editor.onDidChangeModelContent(() => {
+                postMessage({ type: 'contentChanged', fileName: currentFileName });
+
                 if (diagnosticTimeout) clearTimeout(diagnosticTimeout);
                 diagnosticTimeout = setTimeout(() => {
                     postMessage({
@@ -127,17 +424,76 @@
                 }, 500);
             });
 
+            // ========== Breakpoint Toggle (Glyph Margin Click) ==========
+            editor.onMouseDown((e) => {
+                if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+                    const lineNumber = e.target.position.lineNumber;
+                    toggleBreakpoint(lineNumber);
+                }
+            });
+
             // Notify C# that editor is ready
             postMessage({ type: 'ready' });
         });
 
+        // ========== Utility ==========
         function postMessage(data) {
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage(data);
             }
         }
 
-        // --- Responses from C# ---
+        // ========== Breakpoint Management ==========
+        function toggleBreakpoint(lineNumber) {
+            if (breakpoints.has(lineNumber)) {
+                breakpoints.delete(lineNumber);
+            } else {
+                breakpoints.add(lineNumber);
+            }
+            updateBreakpointDecorations();
+            postMessage({
+                type: 'breakpoint',
+                line: lineNumber,
+                enabled: breakpoints.has(lineNumber)
+            });
+        }
+
+        function updateBreakpointDecorations() {
+            const newDecorations = Array.from(breakpoints).map(line => ({
+                range: new monaco.Range(line, 1, line, 1),
+                options: {
+                    isWholeLine: false,
+                    glyphMarginClassName: 'breakpoint-glyph'
+                }
+            }));
+            breakpointDecorations = editor.deltaDecorations(breakpointDecorations, newDecorations);
+        }
+
+        function getBreakpoints() {
+            return Array.from(breakpoints);
+        }
+
+        // ========== Debug Highlight ==========
+        function highlightDebugLine(lineNumber) {
+            if (!editor) return;
+            const decorations = [{
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    className: 'debug-line-highlight',
+                    glyphMarginClassName: 'debug-line-glyph'
+                }
+            }];
+            debugDecorations = editor.deltaDecorations(debugDecorations, decorations);
+            editor.revealLineInCenter(lineNumber);
+        }
+
+        function clearDebugHighlight() {
+            if (!editor) return;
+            debugDecorations = editor.deltaDecorations(debugDecorations, []);
+        }
+
+        // ========== Response Handlers from C# ==========
 
         function setCompletions(items) {
             if (completionResolve) {
@@ -147,9 +503,9 @@
                     insertText: item.insertText || item.label,
                     detail: item.detail || '',
                     filterText: item.filterText || item.label,
-                    range: undefined // Use default range
+                    range: undefined
                 }));
-                completionResolve({ suggestions: suggestions });
+                completionResolve({ suggestions });
                 completionResolve = null;
             }
         }
@@ -170,7 +526,7 @@
                             activeSignature: 0,
                             activeParameter: 0
                         },
-                        dispose: () => { }
+                        dispose: () => {}
                     });
                 } else {
                     signatureResolve(null);
@@ -179,9 +535,189 @@
             }
         }
 
+        function setHover(data) {
+            if (hoverResolve) {
+                if (data && data.content) {
+                    const position = editor.getPosition();
+                    const word = editor.getModel().getWordAtPosition(position);
+                    const range = word
+                        ? new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn)
+                        : new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column);
+
+                    const contents = [{ value: '```csharp\n' + data.content + '\n```' }];
+                    if (data.documentation) {
+                        contents.push({ value: data.documentation });
+                    }
+
+                    hoverResolve({ range, contents });
+                } else {
+                    hoverResolve(null);
+                }
+                hoverResolve = null;
+            }
+        }
+
+        function setDefinition(data) {
+            if (definitionResolve) {
+                if (data && data.fileName) {
+                    // If same file, navigate within current model
+                    if (data.fileName === currentFileName || !data.fileName) {
+                        definitionResolve({
+                            uri: editor.getModel().uri,
+                            range: new monaco.Range(data.line, data.column, data.line, data.column)
+                        });
+                    } else {
+                        // Cross-file: notify C# to open that file, then navigate
+                        postMessage({
+                            type: 'navigateToFile',
+                            fileName: data.fileName,
+                            line: data.line,
+                            column: data.column
+                        });
+                        definitionResolve(null);
+                    }
+                } else {
+                    definitionResolve(null);
+                }
+                definitionResolve = null;
+            }
+        }
+
+        function setReferences(items) {
+            if (referencesResolve) {
+                if (items && items.length > 0) {
+                    const refs = items
+                        .filter(r => r.fileName === currentFileName || !r.fileName)
+                        .map(r => ({
+                            uri: editor.getModel().uri,
+                            range: new monaco.Range(r.line, r.column, r.line, r.column + (r.length || 1))
+                        }));
+                    referencesResolve(refs);
+
+                    // Notify C# about cross-file references for peek display
+                    const crossFileRefs = items.filter(r => r.fileName && r.fileName !== currentFileName);
+                    if (crossFileRefs.length > 0) {
+                        postMessage({ type: 'crossFileReferences', references: crossFileRefs });
+                    }
+                } else {
+                    referencesResolve([]);
+                }
+                referencesResolve = null;
+            }
+        }
+
+        function setCodeActions(items) {
+            if (codeActionsResolve) {
+                if (items && items.length > 0) {
+                    pendingCodeActions = items;
+                    const actions = items.map((item, idx) => ({
+                        title: item.title,
+                        kind: 'quickfix',
+                        command: {
+                            id: 'applyCodeAction',
+                            title: item.title,
+                            arguments: [idx]
+                        }
+                    }));
+
+                    // Register command for applying code actions
+                    actions.forEach(action => {
+                        if (!monaco.editor.getEditors().some(e => e.getAction('applyCodeAction_' + action.command.arguments[0]))) {
+                            editor.addAction({
+                                id: 'applyCodeAction_' + action.command.arguments[0],
+                                label: action.title,
+                                run: () => {
+                                    postMessage({
+                                        type: 'applyCodeAction',
+                                        fileName: currentFileName,
+                                        actionIndex: action.command.arguments[0],
+                                        content: editor.getValue()
+                                    });
+                                }
+                            });
+                        }
+                    });
+
+                    codeActionsResolve({ actions, dispose: () => {} });
+                } else {
+                    codeActionsResolve({ actions: [], dispose: () => {} });
+                }
+                codeActionsResolve = null;
+            }
+        }
+
+        function setFormatting(edits) {
+            if (formattingResolve) {
+                if (edits && edits.length > 0) {
+                    const monacoEdits = edits.map(e => ({
+                        range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn),
+                        text: e.text
+                    }));
+                    formattingResolve(monacoEdits);
+                } else {
+                    formattingResolve([]);
+                }
+                formattingResolve = null;
+            }
+        }
+
+        function setRenameEdits(data) {
+            if (renameResolve) {
+                if (data && data.edits) {
+                    // Apply only current file edits through Monaco rename
+                    const currentFileEdits = data.edits
+                        .filter(e => e.fileName === currentFileName || !e.fileName)
+                        .flatMap(e => e.textEdits.map(te => ({
+                            resource: editor.getModel().uri,
+                            textEdit: {
+                                range: new monaco.Range(te.startLine, te.startColumn, te.endLine, te.endColumn),
+                                text: te.text
+                            }
+                        })));
+
+                    renameResolve({ edits: currentFileEdits });
+
+                    // Cross-file renames
+                    const crossEdits = data.edits.filter(e => e.fileName && e.fileName !== currentFileName);
+                    if (crossEdits.length > 0) {
+                        postMessage({ type: 'applyCrossFileRename', edits: crossEdits });
+                    }
+                } else {
+                    renameResolve({ edits: [] });
+                }
+                renameResolve = null;
+            }
+        }
+
+        function setDocumentSymbols(items) {
+            if (symbolsResolve) {
+                if (items && items.length > 0) {
+                    const symbols = items.map(item => mapSymbol(item));
+                    symbolsResolve(symbols);
+                } else {
+                    symbolsResolve([]);
+                }
+                symbolsResolve = null;
+            }
+        }
+
+        function mapSymbol(item) {
+            const symbol = {
+                name: item.name,
+                detail: item.detail || '',
+                kind: item.kind,
+                range: new monaco.Range(item.startLine, item.startColumn || 1, item.endLine, item.endColumn || 1),
+                selectionRange: new monaco.Range(item.startLine, item.startColumn || 1, item.startLine, (item.startColumn || 1) + item.name.length),
+                children: []
+            };
+            if (item.children && item.children.length > 0) {
+                symbol.children = item.children.map(c => mapSymbol(c));
+            }
+            return symbol;
+        }
+
         function setDiagnostics(diagnostics) {
             if (!editor || !monaco) return;
-
             const model = editor.getModel();
             if (!model) return;
 
@@ -191,13 +727,22 @@
                 endLineNumber: d.endLine,
                 endColumn: d.endColumn,
                 message: d.message,
-                severity: d.severity // 8=Error, 4=Warning, 2=Info, 1=Hint
+                severity: d.severity
             }));
 
             monaco.editor.setModelMarkers(model, 'csharp', markers);
         }
 
-        // --- Interop Functions called from C# ---
+        function applyEdits(edits) {
+            if (!editor) return;
+            const monacoEdits = edits.map(e => ({
+                range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn),
+                text: e.text
+            }));
+            editor.executeEdits('codeAction', monacoEdits);
+        }
+
+        // ========== Interop Functions called from C# ==========
 
         function setContent(content) {
             if (editor) {
@@ -218,39 +763,62 @@
         }
 
         function getContent() {
-            if (editor) {
-                return editor.getValue();
-            }
-            return "";
+            return editor ? editor.getValue() : '';
         }
 
         function setTheme(themeName) {
-            if (monaco) {
-                monaco.editor.setTheme(themeName);
-            }
+            if (monaco) monaco.editor.setTheme(themeName);
         }
 
         function layout() {
-            if (editor) {
-                editor.layout();
-            }
+            if (editor) editor.layout();
         }
 
         function setMinimap(enabled) {
-            if (editor) {
-                editor.updateOptions({ minimap: { enabled: enabled } });
-            }
+            if (editor) editor.updateOptions({ minimap: { enabled } });
         }
 
         function setReadOnly(readOnly) {
+            if (editor) editor.updateOptions({ readOnly });
+        }
+
+        function revealLine(lineNumber) {
             if (editor) {
-                editor.updateOptions({ readOnly: readOnly });
+                editor.revealLineInCenter(lineNumber);
+                editor.setPosition({ lineNumber, column: 1 });
+                editor.focus();
             }
         }
 
-        // Legacy support
-        function updateCompletions(json) {
-            // Not used with Roslyn provider, but kept for compatibility
+        function revealPosition(lineNumber, column) {
+            if (editor) {
+                editor.revealLineInCenter(lineNumber);
+                editor.setPosition({ lineNumber, column });
+                editor.focus();
+            }
+        }
+
+        function setSelection(startLine, startCol, endLine, endCol) {
+            if (editor) {
+                editor.setSelection(new monaco.Range(startLine, startCol, endLine, endCol));
+                editor.revealRangeInCenter(new monaco.Range(startLine, startCol, endLine, endCol));
+                editor.focus();
+            }
+        }
+
+        function getSelection() {
+            if (!editor) return null;
+            const sel = editor.getSelection();
+            return sel ? {
+                startLine: sel.startLineNumber,
+                startColumn: sel.startColumn,
+                endLine: sel.endLineNumber,
+                endColumn: sel.endColumn
+            } : null;
+        }
+
+        function focus() {
+            if (editor) editor.focus();
         }
     </script>
 </body>
