@@ -26,6 +26,8 @@ namespace ProtoTestTool
         private readonly Dictionary<string, List<DiagnosticDto>> _allDiagnostics = new();
         private RoslynIntelliSenseService? _intelliSense;
         private FileSystemWatcher? _fileWatcher;
+        private readonly ScriptDebugger _debugger = new();
+        private readonly Dictionary<string, HashSet<int>> _fileBreakpoints = new();
 
         public event Action? OnRequestCompilation;
 
@@ -37,6 +39,7 @@ namespace ProtoTestTool
             _scriptLoader = scriptLoader;
 
             Loaded += ScriptEditorWindow_Loaded;
+            InitializeDebugger();
         }
 
         private async void ScriptEditorWindow_Loaded(object sender, RoutedEventArgs e)
@@ -44,6 +47,55 @@ namespace ProtoTestTool
             await InitializeIntelliSenseAsync();
             await InitializeEditorsAsync();
             InitializeFileExplorer();
+        }
+
+        private void InitializeDebugger()
+        {
+            _debugger.BreakpointHit += (line, vars) =>
+            {
+                Dispatcher.Invoke(async () =>
+                {
+                    var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                        .FirstOrDefault(t => t.IsChecked == true);
+                    if (activeTab?.Tag != null && _editors.TryGetValue(activeTab.Tag.ToString()!, out var editor))
+                        await editor.ExecuteScriptAsync($"highlightDebugLine({line})");
+
+                    VariablesListView.ItemsSource = vars;
+                    DebugConsoleTab.IsChecked = true;
+                    ContinueBtn.IsEnabled = true;
+                    StepOverBtn.IsEnabled = true;
+                    StopDebugBtn.IsEnabled = true;
+                    AppendLog($"Breakpoint hit at line {line}", Brushes.Yellow);
+                });
+            };
+
+            _debugger.OutputReceived += (output) =>
+            {
+                Dispatcher.Invoke(() => AppendLog(output.TrimEnd(), Brushes.LightGray));
+            };
+
+            _debugger.ErrorOccurred += (error) =>
+            {
+                Dispatcher.Invoke(() => AppendLog($"[Error] {error}", Brushes.Red));
+            };
+
+            _debugger.ExecutionCompleted += () =>
+            {
+                Dispatcher.Invoke(async () =>
+                {
+                    var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                        .FirstOrDefault(t => t.IsChecked == true);
+                    if (activeTab?.Tag != null && _editors.TryGetValue(activeTab.Tag.ToString()!, out var editor))
+                        await editor.ExecuteScriptAsync("clearDebugHighlight()");
+
+                    ContinueBtn.IsEnabled = false;
+                    StepOverBtn.IsEnabled = false;
+                    StopDebugBtn.IsEnabled = false;
+                    DebugBtn.IsEnabled = true;
+                    SetStatus("Ready");
+                    AppendLog("Debug session ended.", Brushes.Gray);
+                });
+            };
         }
 
         // ========== IntelliSense ==========
@@ -449,10 +501,31 @@ namespace ProtoTestTool
 
         private void HandleBreakpointToggle(JsonElement root)
         {
-            // Store breakpoint info for debugging phase
             var line = root.GetProperty("line").GetInt32();
             var enabled = root.GetProperty("enabled").GetBoolean();
-            System.Diagnostics.Debug.WriteLine($"[Breakpoint] Line {line}, Enabled: {enabled}");
+
+            // Track per-file breakpoints
+            var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.IsChecked == true);
+            if (activeTab?.Tag == null) return;
+            var fileName = activeTab.Tag.ToString()!;
+
+            if (!_fileBreakpoints.TryGetValue(fileName, out var bps))
+            {
+                bps = [];
+                _fileBreakpoints[fileName] = bps;
+            }
+
+            if (enabled)
+            {
+                bps.Add(line);
+                _debugger.AddBreakpoint(line);
+            }
+            else
+            {
+                bps.Remove(line);
+                _debugger.RemoveBreakpoint(line);
+            }
         }
 
         // ========== Tab Management ==========
@@ -872,10 +945,29 @@ namespace ProtoTestTool
             }
         }
 
-        private void DebugBtn_Click(object sender, RoutedEventArgs e)
+        private async void DebugBtn_Click(object sender, RoutedEventArgs e)
         {
-            // Placeholder for Phase 5 debugging
-            AppendLog("[Debug] Debugging not yet implemented.", Brushes.Orange);
+            var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                .FirstOrDefault(t => t.IsChecked == true);
+            if (activeTab?.Tag == null) return;
+
+            var fileName = activeTab.Tag.ToString()!;
+            if (!_editors.TryGetValue(fileName, out var editor)) return;
+
+            var code = await GetEditorContent(editor);
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                AppendLog("[Debug] No code to debug.", Brushes.Orange);
+                return;
+            }
+
+            DebugBtn.IsEnabled = false;
+            StopDebugBtn.IsEnabled = true;
+            DebugConsoleTab.IsChecked = true;
+            SetStatus("Debugging...");
+            AppendLog($"Starting debug: {fileName}", Brushes.DeepSkyBlue);
+
+            await _debugger.ExecuteWithDebuggerAsync(code);
         }
 
         private void PackagesBtn_Click(object sender, RoutedEventArgs e)
@@ -920,9 +1012,25 @@ namespace ProtoTestTool
 
         // ========== Debug Controls (Phase 5 placeholders) ==========
 
-        private void ContinueBtn_Click(object sender, RoutedEventArgs e) { }
-        private void StepOverBtn_Click(object sender, RoutedEventArgs e) { }
-        private void StopDebugBtn_Click(object sender, RoutedEventArgs e) { }
+        private void ContinueBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _debugger.Continue();
+            ContinueBtn.IsEnabled = false;
+            StepOverBtn.IsEnabled = false;
+        }
+
+        private void StepOverBtn_Click(object sender, RoutedEventArgs e)
+        {
+            // Step Over = Continue + will break on next line
+            _debugger.Continue();
+            ContinueBtn.IsEnabled = false;
+            StepOverBtn.IsEnabled = false;
+        }
+
+        private void StopDebugBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _debugger.Stop();
+        }
 
         // ========== Legacy Compatibility ==========
 
