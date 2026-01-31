@@ -6,6 +6,8 @@ using System.Windows;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using ProtoTestTool.Services;
+using System.Linq;
+using System.Windows.Controls;
 
 namespace ProtoTestTool
 {
@@ -14,7 +16,7 @@ namespace ProtoTestTool
         private readonly string _workspacePath;
         private readonly string _workspaceRoot;
         private readonly ScriptLoader _scriptLoader;
-        private readonly System.Collections.Generic.Dictionary<string, string> _fileMapping = new();
+        private readonly Dictionary<string, Microsoft.Web.WebView2.Wpf.WebView2> _editors = new();
         private RoslynIntelliSenseService? _intelliSense;
 
         public ScriptEditorWindow(string workspacePath, ScriptLoader scriptLoader)
@@ -58,6 +60,25 @@ namespace ProtoTestTool
 
         private async Task InitializeEditorsAsync()
         {
+            // Cleanup existing dynamic UI elements
+            var staticTabs = new[] { "PacketLoader.cs", "PacketHeader.cs", "PacketCodec.cs" };
+            
+            // Remove dynamic tabs
+            var tabsToRemove = TabsPanel.Children.OfType<RadioButton>()
+                .Where(t => t.Tag != null && !staticTabs.Contains(t.Tag.ToString()))
+                .ToList();
+            foreach (var tab in tabsToRemove) TabsPanel.Children.Remove(tab);
+
+            // Remove dynamic editors
+            var editorsToRemove = EditorsGrid.Children.OfType<Microsoft.Web.WebView2.Wpf.WebView2>()
+                .Where(w => w.Name != "LoaderEditor" && w.Name != "HeaderEditor" && w.Name != "CodecEditor")
+                .ToList();
+            foreach (var editor in editorsToRemove) 
+            {
+                editor.Dispose(); // Ensure WebView2 resources are released
+                EditorsGrid.Children.Remove(editor);
+            }
+
             var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
             if (!File.Exists(editorPath))
             {
@@ -66,19 +87,56 @@ namespace ProtoTestTool
             }
             var editorUrl = new Uri(editorPath).AbsoluteUri;
 
-            // Resolve file paths (.cs only)
-            _fileMapping["Registry"] = "PacketRegistry.cs";
-            _fileMapping["Header"] = "PacketHeader.cs";
-            _fileMapping["Codec"] = "PacketCodec.cs";
-            _fileMapping["Interceptor"] = "PacketInterceptor.cs";
+            _editors.Clear();
+            _editors["PacketLoader.cs"] = LoaderEditor;
+            _editors["PacketHeader.cs"] = HeaderEditor;
+            _editors["PacketCodec.cs"] = CodecEditor;
 
-            // Initialize WebView2 for each tab
-            await InitializeWebView(RegistryEditor, editorUrl, _fileMapping["Registry"]);
-            await InitializeWebView(HeaderEditor, editorUrl, _fileMapping["Header"]);
-            await InitializeWebView(CodecEditor, editorUrl, _fileMapping["Codec"]);
-            await InitializeWebView(InterceptorEditor, editorUrl, _fileMapping["Interceptor"]);
+            // Initialize Static Editors
+            await InitializeWebView(LoaderEditor, editorUrl, "PacketLoader.cs");
+            await InitializeWebView(HeaderEditor, editorUrl, "PacketHeader.cs");
+            await InitializeWebView(CodecEditor, editorUrl, "PacketCodec.cs");
+
+            // Scan for other .cs files
+            if (Directory.Exists(_workspacePath))
+            {
+                var files = Directory.GetFiles(_workspacePath, "*.cs");
+                foreach (var file in files)
+                {
+                    var fileName = Path.GetFileName(file);
+                    if (!_editors.ContainsKey(fileName))
+                    {
+                        await AddDynamicTab(fileName, editorUrl);
+                    }
+                }
+            }
 
             SetStatus("Ready");
+        }
+
+        private async Task AddDynamicTab(string fileName, string editorUrl)
+        {
+            // 1. Create Webview
+            var webView = new Microsoft.Web.WebView2.Wpf.WebView2
+            {
+                Visibility = Visibility.Hidden
+            };
+            EditorsGrid.Children.Add(webView);
+            _editors[fileName] = webView;
+
+            // 2. Create Tab Button
+            var radio = new RadioButton
+            {
+                Content = Path.GetFileNameWithoutExtension(fileName),
+                Tag = fileName,
+                Style = (Style)FindResource("EditorTabStyle"),
+                IsChecked = false
+            };
+            radio.Checked += Tab_Checked;
+            TabsPanel.Children.Add(radio);
+
+            // 3. Init
+            await InitializeWebView(webView, editorUrl, fileName);
         }
 
         private async Task InitializeWebView(Microsoft.Web.WebView2.Wpf.WebView2 webView, string url, string fileName)
@@ -244,23 +302,17 @@ namespace ProtoTestTool
 
         private void Tab_Checked(object sender, RoutedEventArgs e)
         {
-            if (RegistryEditor == null) return;
-
-            var button = sender as System.Windows.Controls.Primitives.ToggleButton;
+            var button = sender as RadioButton;
             if (button == null || button.Tag == null) return;
 
-            string targetName = button.Tag.ToString()!;
+            string fileName = button.Tag.ToString()!;
 
-            SetVisibility(RegistryEditor, targetName == "RegistryEditor");
-            SetVisibility(HeaderEditor, targetName == "HeaderEditor");
-            SetVisibility(CodecEditor, targetName == "CodecEditor");
-            SetVisibility(InterceptorEditor, targetName == "InterceptorEditor");
-        }
-
-        private void SetVisibility(Microsoft.Web.WebView2.Wpf.WebView2 webView, bool isVisible)
-        {
-            if (webView == null) return;
-            webView.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var kvp in _editors)
+            {
+                var view = kvp.Value;
+                bool isTarget = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase);
+                view.Visibility = isTarget ? Visibility.Visible : Visibility.Hidden;
+            }
         }
 
         private async Task<string> GetEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
@@ -279,24 +331,19 @@ namespace ProtoTestTool
 
         private async Task SaveAllFilesAsync()
         {
-            var registryCode = await GetEditorContent(RegistryEditor);
-            var headerCode = await GetEditorContent(HeaderEditor);
-            var codecCode = await GetEditorContent(CodecEditor);
-            var interceptorCode = await GetEditorContent(InterceptorEditor);
-
-            if (string.IsNullOrWhiteSpace(registryCode) || string.IsNullOrWhiteSpace(headerCode) ||
-                string.IsNullOrWhiteSpace(codecCode) || string.IsNullOrWhiteSpace(interceptorCode))
+            foreach (var kvp in _editors)
             {
-                AppendLog("Error: One or more editors are empty. Save Aborted.", Brushes.Red);
-                return;
+                var fileName = kvp.Key;
+                var view = kvp.Value;
+                
+                var code = await GetEditorContent(view);
+                if (string.IsNullOrWhiteSpace(code)) continue;
+
+                var path = Path.Combine(_workspacePath, fileName);
+                await File.WriteAllTextAsync(path, code);
             }
 
-            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Registry"]), registryCode);
-            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Header"]), headerCode);
-            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Codec"]), codecCode);
-            await File.WriteAllTextAsync(Path.Combine(_workspacePath, _fileMapping["Interceptor"]), interceptorCode);
-
-            AppendLog("Files Saved.", Brushes.Gray);
+            AppendLog($"Saved {_editors.Count} files.", Brushes.Gray);
         }
 
         private async void SaveBtn_Click(object sender, RoutedEventArgs e)
@@ -309,6 +356,44 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"Save Error: {ex.Message}", Brushes.Red);
+            }
+        }
+        
+        // Add Handlers
+        private void AddProxyInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ProxyInterceptor", "PacketInterceptor_Proxy");
+        private void AddClientInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ClientInterceptor", "PacketInterceptor_Client");
+        private void AddReplayInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ReplayInterceptor", "PacketInterceptor_Replay");
+
+        private async void CreateInterceptor(string baseName, string templateType)
+        {
+            // Simple unique numbering
+            string fileName = $"{baseName}.cs";
+            int count = 1;
+            while (File.Exists(Path.Combine(_workspacePath, fileName)))
+            {
+                fileName = $"{baseName}{count++}.cs";
+            }
+
+            try
+            {
+                var template = ScriptTemplateFactory.GetTemplate(templateType);
+                var path = Path.Combine(_workspacePath, fileName);
+                await File.WriteAllTextAsync(path, template);
+
+                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
+                var editorUrl = new Uri(editorPath).AbsoluteUri;
+
+                await AddDynamicTab(fileName, editorUrl);
+                
+                // Select the new tab
+                var newTab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
+                if (newTab != null) newTab.IsChecked = true;
+
+                AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Create File Error: {ex.Message}", Brushes.Red);
             }
         }
 

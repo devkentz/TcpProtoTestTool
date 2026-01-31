@@ -11,7 +11,7 @@ namespace ProtoTestTool
     public partial class WorkspaceDialog : Wpf.Ui.Controls.FluentWindow
     {
         public string? SelectedPath { get; private set; }
-        private GlobalSettings _settings;
+        private readonly GlobalSettings _settings;
 
         public class RecentItem
         {

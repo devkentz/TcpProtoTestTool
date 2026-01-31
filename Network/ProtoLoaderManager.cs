@@ -4,12 +4,13 @@ using System.Reflection;
 using Google.Protobuf;
 
 using Google.Protobuf.Reflection;
+using ProtoTestTool.ScriptContract;
 
 namespace ProtoTestTool.Network
 {
-    public class ProtoLoaderManager
+    public class ProtoLoaderManager : IPacketRegistry
     {
-        public FrozenDictionary<string, PacketConvertor> PacketsByMsgId { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
+        public FrozenDictionary<string, PacketConvertor> PacketsByName { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
         public FrozenDictionary<string, PacketConvertor> SendPackets { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
         public FrozenDictionary<string, PacketConvertor> ReceivePackets { get; private set; } = FrozenDictionary<string, PacketConvertor>.Empty;
         // Request -> Response 매핑
@@ -117,7 +118,7 @@ namespace ProtoTestTool.Network
             }
 
             // 4. FrozenDictionary로 변환 (읽기 전용 최적화)
-            PacketsByMsgId = allPacketsDict.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+            PacketsByName = allPacketsDict.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             SendPackets = sendPacketsDict.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             ReceivePackets = receivePacketsDict.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             RequestToResponse = reqToResMapping.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
@@ -177,9 +178,17 @@ namespace ProtoTestTool.Network
             return null;
         }
 
-        public PacketConvertor? Find(string name) => PacketsByMsgId.GetValueOrDefault(name);
+        public PacketConvertor? Find(string name) => PacketsByName.GetValueOrDefault(name);
 
-        public IReadOnlyList<PacketConvertor> GetSendPackets() => SendPackets.Values;
+        public IReadOnlyList<PacketConvertor> GetSendPackets() 
+        {
+            // If user has defined specific Send packets, use them.
+            // Otherwise, fallback to showing all registered packets (Default behavior).
+            if (SendPackets != null && SendPackets.Count > 0)
+                return SendPackets.Values.ToList();
+                
+            return PacketsByName.Values.ToList();
+        }
         
         // Runtime Registration
         public void RegisterPacket(Type type)
@@ -187,24 +196,68 @@ namespace ProtoTestTool.Network
             var name = type.Name;
             var convertor = new PacketConvertor { Name = name, Type = type };
             
-            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByMsgId ?? FrozenDictionary<string, PacketConvertor>.Empty);
+            // Default only adds to generic lookup
+            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName ?? FrozenDictionary<string, PacketConvertor>.Empty);
             newPackets[name] = convertor;
-            PacketsByMsgId = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+            PacketsByName = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public void Clear()
+        {
+            PacketsByName = FrozenDictionary<string, PacketConvertor>.Empty;
+            SendPackets = FrozenDictionary<string, PacketConvertor>.Empty;
+            ReceivePackets = FrozenDictionary<string, PacketConvertor>.Empty;
+            RequestToResponse = FrozenDictionary<string, string>.Empty;
+            _idToType.Clear();
+            _typeToId.Clear();
+        }
+
+        // IPacketRegistry Implementation
+        private readonly Dictionary<int, Type> _idToType = new();
+        private readonly Dictionary<Type, int> _typeToId = new();
+
+        public IEnumerable<Type> GetMessageTypes() => PacketsByName.Values.Select(p => p.Type).Distinct();
+
+        public Type? GetMessageType(int msgId) => _idToType.GetValueOrDefault(msgId);
+
+        public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type, 0);
+
+        public void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null)
+        {
+            _idToType[msgId] = type;
+            _typeToId[type] = msgId;
+
+            var name = msgName ?? type.Name;
             
-            if (name.EndsWith("Req"))
+            // 1. Generic Registration (Lookup by Name)
+            var convertor = new PacketConvertor { Name = name, Type = type };
+            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName ?? FrozenDictionary<string, PacketConvertor>.Empty);
+            newPackets[name] = convertor;
+            PacketsByName = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+            // 2. Optional: Register as Send (Request) or Receive
+            if (isRequest == true)
             {
                 var newSend = new Dictionary<string, PacketConvertor>(SendPackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
                 newSend[name] = convertor;
                 SendPackets = newSend.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             }
+            else if (isRequest == false) 
+            {
+                var newRecv = new Dictionary<string, PacketConvertor>(ReceivePackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
+                newRecv[name] = convertor;
+                ReceivePackets = newRecv.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+            }
         }
 
-        public void Clear()
+        public MessageParser GetParserById(int msgId)
         {
-            PacketsByMsgId = FrozenDictionary<string, PacketConvertor>.Empty;
-            SendPackets = FrozenDictionary<string, PacketConvertor>.Empty;
-            ReceivePackets = FrozenDictionary<string, PacketConvertor>.Empty;
-            RequestToResponse = FrozenDictionary<string, string>.Empty;
+            if (_idToType.TryGetValue(msgId, out var type))
+            {
+                var prop = type.GetProperty("Parser", BindingFlags.Public | BindingFlags.Static);
+                if (prop != null) return (MessageParser)prop.GetValue(null)!;
+            }
+            throw new ArgumentException($"Parser not found for ID {msgId}");
         }
     }
 }

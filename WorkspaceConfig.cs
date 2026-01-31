@@ -9,7 +9,7 @@ namespace ProtoTestTool
         public string ProtoFolderPath { get; set; } = "";
         public string TargetIp { get; set; } = "127.0.0.1";
         public int TargetPort { get; set; } = 9000;
-        
+
         // Proxy settings (optional but good to have)
         public int ProxyLocalPort { get; set; } = 9000;
         public string ProxyTargetIp { get; set; } = "127.0.0.1";
@@ -22,29 +22,21 @@ namespace ProtoTestTool
             if (string.IsNullOrWhiteSpace(workspaceDir) || !Directory.Exists(workspaceDir)) return new WorkspaceConfig();
 
             var path = Path.Combine(workspaceDir, ConfigFileName);
-            if (File.Exists(path))
-            {
-                try
-                {
-                    var json = File.ReadAllText(path);
-                    return JsonConvert.DeserializeObject<WorkspaceConfig>(json) ?? new WorkspaceConfig();
-                }
-                catch { }
-            }
-            return new WorkspaceConfig();
+            if (!File.Exists(path)) 
+                return new WorkspaceConfig();
+            
+            var json = File.ReadAllText(path);
+            return JsonConvert.DeserializeObject<WorkspaceConfig>(json) ?? new WorkspaceConfig();
         }
 
         public void Save(string workspaceDir)
         {
-             if (string.IsNullOrWhiteSpace(workspaceDir) || !Directory.Exists(workspaceDir)) return;
+            if (string.IsNullOrWhiteSpace(workspaceDir) || !Directory.Exists(workspaceDir)) 
+                return;
 
-             try
-             {
-                 var path = Path.Combine(workspaceDir, ConfigFileName);
-                 var json = JsonConvert.SerializeObject(this, Formatting.Indented);
-                 File.WriteAllText(path, json);
-             }
-             catch { }
+            var path = Path.Combine(workspaceDir, ConfigFileName);
+            var json = JsonConvert.SerializeObject(this, Formatting.Indented);
+            File.WriteAllText(path, json);
         }
     }
 }

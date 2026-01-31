@@ -27,13 +27,7 @@ namespace ProtoTestTool.ScriptContract
                 connection.Open();
 
                 var command = connection.CreateCommand();
-                command.CommandText = 
-                    @"CREATE TABLE IF NOT EXISTS KeyValueStore (
-                        Key TEXT PRIMARY KEY, 
-                        Value TEXT, 
-                        Type TEXT,
-                        UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                    );";
+                command.CommandText = "CREATE TABLE IF NOT EXISTS KeyValueStore (Key TEXT PRIMARY KEY, Value TEXT, Type TEXT, UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP );";
                 command.ExecuteNonQuery();
             }
             catch (Exception ex)
@@ -133,9 +127,7 @@ namespace ProtoTestTool.ScriptContract
             var result = _memoryStore.AddOrUpdate(
                 key,
                 addValue,
-                (k, existing) => existing is T typed
-                    ? updateFactory(k, typed)
-                    : addValue);
+                (k, existing) => existing is T typed ? updateFactory(k, typed) : addValue);
 
             return (T)result!;
         }
@@ -155,10 +147,7 @@ namespace ProtoTestTool.ScriptContract
                 using var transaction = connection.BeginTransaction();
                 var command = connection.CreateCommand();
                 command.Transaction = transaction;
-                
-                command.CommandText = 
-                    @"INSERT OR REPLACE INTO KeyValueStore (Key, Value, Type, UpdatedAt) 
-                      VALUES ($key, $value, $type, CURRENT_TIMESTAMP)";
+                command.CommandText = "INSERT OR REPLACE INTO KeyValueStore (Key, Value, Type, UpdatedAt) VALUES ($key, $value, $type, CURRENT_TIMESTAMP)";
                 
                 var pKey = command.CreateParameter(); pKey.ParameterName = "$key"; command.Parameters.Add(pKey);
                 var pValue = command.CreateParameter(); pValue.ParameterName = "$value"; command.Parameters.Add(pValue);
@@ -166,7 +155,9 @@ namespace ProtoTestTool.ScriptContract
 
                 foreach (var kvp in _memoryStore)
                 {
-                    if (kvp.Value == null) continue;
+                    if (kvp.Value == null) 
+                        continue;
+                    
                     pKey.Value = kvp.Key;
                     pValue.Value = JsonConvert.SerializeObject(kvp.Value);
                     pType.Value = kvp.Value.GetType().AssemblyQualifiedName; // Store full type info

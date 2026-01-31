@@ -98,19 +98,19 @@ public class PacketRegistry : IPacketRegistry
     private readonly Dictionary<int, Type> _idToType = new Dictionary<int, Type>();
     private readonly Dictionary<Type, int> _typeToId = new Dictionary<Type, int>();
 
-    public void Register(int id, Type type)
+    public void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null)
     {
-        _idToType[id] = type;
-        _typeToId[type] = id;
+        _idToType[msgId] = type;
+        _typeToId[type] = msgId;
     }
 
     public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
 
-    public Type? GetMessageType(int id) => _idToType.TryGetValue(id, out var type) ? type : null;
+    public Type? GetMessageType(int msgId) => _idToType.TryGetValue(msgId, out var type) ? type : null;
 
-    public int GetMessageId(Type type) => _typeToId.TryGetValue(type, out var id) ? id : 0;
+    public int GetMsgId(Type type) => _typeToId.TryGetValue(type, out var id) ? id : 0;
 
-    public MessageParser GetParserById(int id)
+    public MessageParser GetParserById(int msgId)
     {
         throw new NotImplementedException();
     }

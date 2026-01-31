@@ -10,6 +10,7 @@ using Newtonsoft.Json;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 
@@ -27,10 +28,7 @@ namespace ProtoTestTool
         private INetworkService _networkService; // Use Interface
         private readonly ScriptLoader _scriptLoader = new();
         private readonly List<byte> _receiveBuffer = new();
-        // ... (other fields)
-
-        // ...
-
+ 
         public MainWindow()
         {
             InitializeComponent();
@@ -44,7 +42,7 @@ namespace ProtoTestTool
             _networkService.DataReceived += OnDataReceived;
 
             Closing += MainWindow_Closing;
-            // ...
+            ResponseHeaderGrid.ItemsSource = _responseHeaders;
         }
 
         private void OnConnected()
@@ -107,50 +105,125 @@ namespace ProtoTestTool
             }
         }
 
-        // ...
-
         private async void PacketSelectorControl_PacketSelected(object sender, RoutedEventArgs e)
         {
-            // ...
-                // Check service status
+            var selected = PacketSelectorControl.SelectedPacket;
+            if (selected == null)
+            {
+                await JsonEditorView.SetTextAsync("{}");
+                SendBtn.IsEnabled = false;
+                return;
+            }
+
+            try
+            {
+                // Ensure default json template is prepared on packet
+                var json = selected.DefaultJsonString();
+                // Binding will push JsonText into the editor; ensure UI gets updated
+                // If editor not yet ready, explicitly set text as fallback
+                if (JsonEditorView != null)
+                {
+                    await JsonEditorView.SetTextAsync(json);
+                }
                 SendBtn.IsEnabled = _networkService.IsConnected;
-            // ...
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Error] Failed to load packet template: {ex.Message}", Brushes.Red);
+                SendBtn.IsEnabled = false;
+            }
         }
 
         // ...
 
         private async Task SendBtn_ClickAsync(object sender, RoutedEventArgs e)
         {
-             // ...
-                if (!_networkService.IsConnected)
+            if (!_networkService.IsConnected)
+            {
+                FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
+                return;
+            }
+
+            var selectedPacket = PacketSelectorControl.SelectedPacket;
+            if (selectedPacket == null)
+            {
+                FluentMessageBox.ShowError("패킷이 선택되지 않았습니다.");
+                return;
+            }
+
+            try
+            {
+                // 1. Parse Body
+                var jsonBody = await JsonEditorView.GetTextAsync();
+                var message = selectedPacket.ToPacket(jsonBody);
+
+                // 2. Parse Header
+                var jsonHeader = await HeaderJsonEditorView.GetTextAsync();
+                IHeader? header = null;
+
+                if (_scriptAssembly != null)
                 {
-                    FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
-                    return;
+                    var headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                    if (headerType != null)
+                    {
+                        header = JsonConvert.DeserializeObject(jsonHeader, headerType) as IHeader;
+                    }
                 }
-             // ...
+
+                if (header == null)
+                {
+                     throw new Exception("Failed to create Packet Header. Check script compilation or JSON format.");
+                }
+
+                // 3. Send
+                await SendPacketPipelineAsync(message, header);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Send Error] {ex.Message}", Brushes.Red);
+            }
         }
 
         private Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
         {
             try
             {
-                if (!_networkService.IsConnected)
+                if (_networkService == null || !_networkService.IsConnected)
                 {
                     AppendLog("Cannot send: Disconnected", Brushes.Red);
                     return Task.CompletedTask;
                 }
                 
-                // ... (Interceptor logic)
+                // Interceptor Hook
+                if (_clientInterceptor != null) 
+                {
+                    var ctx = new ClientPacketContext(message);
+                    try
+                    {
+                        _clientInterceptor.OnBeforeSend(ctx);
+                        message = ctx.Message; // Allow modification
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"[Interceptor Error] {ex.Message}", Brushes.Red);
+                    }
+                }
 
                 var packet = new Packet(headerObj, message);
 
                 // Encode & Send
+                if (ScriptGlobals.Codec == null) throw new Exception("PacketCodec not initialized.");
+
                 var bytes = ScriptGlobals.Codec.Encode(packet);
-                _networkService.SendAsync(bytes); // Fire and forget wrapper
+                _networkService.SendAsync(bytes); 
 
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
                 
-                // ... (Recording logic)
+                // Recording
+                if (PacketRecorder.Client.IsRecording)
+                {
+                    PacketRecorder.Client.Record(PacketDirection.Outbound, packet);
+                }
             }
             catch (Exception ex)
             {
@@ -164,7 +237,8 @@ namespace ProtoTestTool
         private ScriptEditorWindow? _scriptEditorWindow;
 
         // Editor State
-        private string _currentEditingFile = "";
+        // private string _currentEditingFile = ""; // Removed
+
         
         // Replay State
         private ObservableCollection<RecordedPacket> _loadedPackets = new ObservableCollection<RecordedPacket>();
@@ -195,58 +269,16 @@ namespace ProtoTestTool
         {
             _workspacePath = workspacePath;
             InitializeWorkspaceFiles(_workspacePath);
-            // Monaco Editors initialize themselves via Loaded event.
-
+            UpdateWorkspaceUI();
 
             Title = $"ProtoTestTool - {_workspacePath}";
 
-            string settingsPath = Path.Combine(_workspacePath, "settings.json");
-            if (File.Exists(settingsPath))
-            {
-                LoadWorkspaceSettings();
-            }
-            
-            // Re-compile logic
-            _ = Dispatcher.InvokeAsync(async () => 
-            {
-                 // Small delay to ensure UI ready
-                 await Task.Delay(500);
-                 await LoadProtosFromFolderAsync(_workspacePath);
-                 await CompileWorkspaceScriptsAsync(_workspacePath);
-            });
+            // LoadWorkspaceConfiguration internally triggers LoadWorkspaceAsync
+            // (Proto load + Script compile) via fire-and-forget
+            LoadWorkspaceConfiguration(_workspacePath);
         }
 
-        public MainWindow()
-        {
-            InitializeComponent();
-            Closing += MainWindow_Closing;
 
-            // Initialize Globals with dummy logger for startup (real logger injected on compilation)
-            ScriptGlobals.Initialize(
-                new ScriptStateStore(),
-                new ToolScriptLogger((msg, color) =>
-                {
-                    /* Startup Log */
-                })
-            );
-
-            // _roslynService = new RoslynService(); (Removed)
-
-            // Load Workspace Settings (Will be overridden if constructor arg is provided)
-            LoadWorkspaceSettings();
-
-            // Use Loaded event for async initialization (safer than constructor)
-            Loaded += MainWindow_Loaded;
-
-            // Load existing Protos
-            Network.ProtoLoaderManager.Instance.LoadAllProtos();
-            // PacketSelectorControl handles its own loading
-            // PacketListBox.ItemsSource = Network.ProtoLoaderManager.Instance.SendPackets.Values;
-
-            // Bind Headers
-            // RequestHeaderGrid removed (replaced by HeaderScriptEditor)
-            ResponseHeaderGrid.ItemsSource = _responseHeaders;
-        }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e) => _ = MainWindow_LoadedAsync();
 
@@ -307,7 +339,8 @@ namespace ProtoTestTool
             if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
             {
                 var app = (App)Application.Current;
-                if (!app.TryAcquireWorkspaceLock(dialog.SelectedPath))
+                if (!string.Equals(dialog.SelectedPath, _workspacePath, StringComparison.OrdinalIgnoreCase) &&
+                    !app.TryAcquireWorkspaceLock(dialog.SelectedPath))
                 {
                     MessageBox.Show(
                         "이미 다른 ProtoTestTool에서 사용 중인 워크스페이스입니다.",
@@ -376,7 +409,16 @@ namespace ProtoTestTool
 
         private void LoadWorkspaceConfiguration(string path)
         {
-            var config = WorkspaceConfig.Load(path);
+            WorkspaceConfig config;
+            try
+            {
+                config = WorkspaceConfig.Load(path);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Config] Failed to load workspace_config.json: {ex.Message}", Brushes.Red);
+                config = new WorkspaceConfig();
+            }
 
             // Connection
             IpBox.Text = config.TargetIp;
@@ -618,68 +660,12 @@ namespace ProtoTestTool
             {
                 recorder.Stop();
                 UpdateButtonText("REC");
-                btn.Foreground = new SolidColorBrush(Color.FromRgb(255, 85, 85)); 
+                btn.Foreground = new SolidColorBrush(Color.FromRgb(255, 85, 85));
                 AppendLog($"[{recorderName}] Stopped recording.", Brushes.Gray);
             }
         }
 
-        private void ConnectToggleBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (_client != null && _client.IsConnected)
-            {
-                // Disconnect
-                _client.DisconnectAndStop();
-            }
-            else
-            {
-                // Connect
-                var ip = IpBox.Text;
-                if (!int.TryParse(PortBox.Text, out var port))
-                {
-                    AppendLog("Invalid Port", Brushes.Red);
-                    return;
-                }
 
-                SaveWorkspaceConfiguration();
-
-                // Disable button while connecting
-                ConnectToggleBtn.IsEnabled = false;
-
-                try
-                {
-                    if (_client != null)
-                    {
-                        _client.DisconnectAndStop();
-                        _client = null;
-                    }
-
-                    _client = new SimpleTcpClient(ip, port);
-                    _client.Connected += () => Dispatcher.Invoke(() =>
-                    {
-                        AppendLog($"Connected to {ip}:{port}", Brushes.DeepSkyBlue);
-                        UpdateConnectionState(true);
-                    });
-                    _client.Disconnected += () => Dispatcher.Invoke(() =>
-                    {
-                        AppendLog("Disconnected", Brushes.Orange);
-                        UpdateConnectionState(false);
-                    });
-                    _client.DataReceived += OnDataReceived;
-                    _client.ErrorOccurred += (err) => Dispatcher.Invoke(() =>
-                    {
-                        AppendLog($"Socket Error: {err}", Brushes.Red);
-                        UpdateConnectionState(false); // Ensure button resets on error
-                    });
-
-                    _client.ConnectAsync();
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"Connection failed: {ex.Message}", Brushes.Red);
-                    UpdateConnectionState(false);
-                }
-            }
-        }
 
         private void UpdateConnectionState(bool connected)
         {
@@ -704,27 +690,7 @@ namespace ProtoTestTool
 
         #region Sending & Receiving
 
-        private async void PacketSelectorControl_PacketSelected(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (PacketSelectorControl.SelectedPacket is not PacketConvertor convertor) return;
 
-                // Generate Default JSON
-                var (_, json) = convertor.DefaultJsonString();
-                await JsonEditorView.SetTextAsync(json);
-                SendBtn.IsEnabled = _client != null && _client.IsConnected;
-
-                _currentEditingFile = convertor.Name;
-
-                // Generate Default JSON for Header
-                await LoadHeaderJsonAsync();
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[Error] Selection changed: {ex.Message}", Brushes.Red);
-            }
-        }
 
         private async Task LoadHeaderJsonAsync()
         {
@@ -799,135 +765,11 @@ namespace ProtoTestTool
             await SendBtn_ClickAsync(sender, e);
         }
 
-        private async Task SendBtn_ClickAsync(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (PacketSelectorControl.SelectedPacket == null)
-                {
-                    AppendLog("No packet type selected.", Brushes.Red);
-                    return;
-                }
 
-                if (_client == null || !_client.IsConnected)
-                {
-                    FluentMessageBox.ShowError("서버에 연결되지 않았습니다.");
-                    return;
-                }
-
-                var type = (PacketSelectorControl.SelectedPacket as PacketConvertor)?.Type;
-                if (type == null)
-                {
-                    AppendLog("No packet type selected.", Brushes.Red);
-                    return;
-                }
-
-                var json = await JsonEditorView.GetTextAsync();
-
-                if (JsonConvert.DeserializeObject(json, type) is not IMessage message)
-                    return;
-
-                // Client Interceptor Hook
-                if (_clientInterceptor != null)
-                {
-                    var ctx = new ClientPacketContext(message);
-
-
-                    _clientInterceptor.OnBeforeSend(ctx);
-                    message = ctx.Message;
-                }
-
-                // Find Header Type
-                Type? headerType = null;
-                // MainWindow.Scripting.cs should expose _headerAssembly or we access it via reflection/event
-                // But _headerAssembly is private in MainWindow block.
-                // We are in the same partial class 'MainWindow'.
-                // verifying _headerAssembly visibility. It was added as 'private' in MainWindow.Scripting.cs (partial).
-                // Private fields in partial classes are shared across files.
-
-                if (_scriptAssembly != null)
-                {
-                    headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                    if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
-                }
-
-                if (headerType == null)
-                {
-                    AppendLog("Header class not found in compiled scripts.", Brushes.Red);
-                    return;
-                }
-
-                // Header JSON to Object
-                IHeader? headerObj = null;
-                try
-                {
-                    // Use HeaderJsonEditor.Text
-                    headerObj = (IHeader?) JsonConvert.DeserializeObject(await HeaderJsonEditorView.GetTextAsync(), headerType);
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"Header JSON Error: {ex.Message}", Brushes.Red);
-                    return;
-                }
-
-                if (headerObj == null)
-                {
-                    AppendLog("Header object is null.", Brushes.Red);
-                    return;
-                }
-
-                await SendPacketPipelineAsync(message, headerObj);
-            }
-            catch (Exception ex)
-            {
-                FluentMessageBox.ShowError($"전송 오류: {ex.Message}");
-                AppendLog($"[Error] {ex.Message}", Brushes.Red);
-            }
-        }
-
-        private Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
-        {
-            try
-            {
-                if (_client == null || !_client.IsConnected)
-                {
-                    AppendLog("Cannot send: Disconnected", Brushes.Red);
-                    return Task.CompletedTask;
-                }
-
-                // Client Interceptor Hook
-                if (_clientInterceptor != null)
-                {
-                    var ctx = new ClientPacketContext(message);
-                    
-                    _clientInterceptor.OnBeforeSend(ctx);
-                    message = ctx.Message;
-                }
-
-                var packet = new Packet(headerObj, message);
-
-                // Encode & Send
-                var bytes = ScriptGlobals.Codec.Encode(packet);
-                _client.SendAsync(bytes.Span);
-
-                AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
-
-                if (PacketRecorder.Client.IsRecording && !isReplay)
-                {
-                    PacketRecorder.Client.Record(PacketDirection.Outbound, packet);
-                }
-            }
-
-            catch (Exception ex)
-            {
-                AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
-            }
-            return Task.CompletedTask;
-        }
 
         public void SendPacket(IHeader header, IMessage message)
         {
-            if (_client == null || !_client.IsConnected)
+            if (_networkService == null || !_networkService.IsConnected)
             {
                 AppendLog("Not connected.", Brushes.Red);
                 return;
@@ -950,7 +792,7 @@ namespace ProtoTestTool
                 }
 
                 var bytes = ScriptGlobals.Codec.Encode(new Packet(header, message));
-                _client.SendAsync(bytes.ToArray());
+                _networkService.SendAsync(bytes);
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)");
             }
             catch (Exception ex)
@@ -971,7 +813,7 @@ namespace ProtoTestTool
 
         private async Task ProcessReceiveBuffer()
         {
-            if (ScriptGlobals.Codec == null) return;
+            Debug.Assert( ScriptGlobals.Codec != null );
 
             // Inefficient List -> Array -> ROS loop for prototype
             while (_receiveBuffer.Count > 0)
@@ -1120,7 +962,7 @@ namespace ProtoTestTool
 
 
 
-            if (_client == null || !_client.IsConnected)
+            if (_networkService == null || !_networkService.IsConnected)
             {
                  MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                  return;

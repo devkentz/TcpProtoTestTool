@@ -1,6 +1,4 @@
-using System;
 using System.IO;
-using System.Threading.Tasks;
 using System.Windows;
 
 namespace ProtoTestTool
@@ -53,9 +51,6 @@ namespace ProtoTestTool
                         // Set Content
                         var jsonContent = System.Text.Json.JsonSerializer.Serialize(_content);
                         await EditorView.ExecuteScriptAsync($"setContent({jsonContent});");
-                        
-                        // ReadOnly mode for viewer
-                        // await EditorView.ExecuteScriptAsync("editor.updateOptions({ readOnly: true });"); // Optional, maybe user wants to copy? Monaco allows copy even in readOnly.
                     }
                 };
             }

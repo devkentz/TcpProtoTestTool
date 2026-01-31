@@ -24,7 +24,7 @@ namespace ProtoTestTool.Services
             // Forward events
             _client.Connected += () => Connected?.Invoke();
             _client.Disconnected += () => Disconnected?.Invoke();
-            _client.ErrorOccurred += (err) => ErrorOccurred?.Invoke(err);
+            _client.ErrorOccurred += (err) => ErrorOccurred?.Invoke(err.ToString());
             _client.DataReceived += (bytes) => DataReceived?.Invoke(bytes);
 
             // SimpleTcpClient.ConnectAsync is theoretically async but current impl might be fire-and-forget or instant.

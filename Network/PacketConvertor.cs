@@ -1,4 +1,5 @@
 ﻿using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Newtonsoft.Json;
 
 
@@ -6,32 +7,31 @@ namespace ProtoTestTool.Network;
 
 public class PacketConvertor
 {
-	public override string ToString() => Name;
+    public override string ToString() => Name;
 
-	public required Type Type { get; set; }
-	public required string Name { get; set; }
-	public string? JsonText { get; set; }
+    public required Type Type { get; set; }
+    public required string Name { get; set; }
+    public string? JsonText { get; set; }
 
-	public (string name, string json) DefaultJsonString()
-	{
-		if (JsonText != null)
-		{
-			return (Name, JsonText);  // 생성된 객체를 JSON 문자열로 변환합니다.
-		}
+    public string DefaultJsonString()
+    {
+        if (JsonText != null)
+            return JsonText;
 
-		var instance = Activator.CreateInstance(Type);  // Type에서 객체 인스턴스를 생성합니다.
-		if(instance == null)
-			return default;
-		
-		ObjectInitializer.EnsureNonNullFields(instance);
+        var instance = Activator.CreateInstance(Type);
+        if (instance == null)
+            return "{}";
 
-		JsonText = JsonConvert.SerializeObject(instance, Formatting.Indented);
-		return (Name, JsonText);  // 생성된 객체를 JSON 문자열로 변환합니다.
-	}
+        ObjectInitializer.EnsureNonNullFields(instance, addDefaultElements: true);
 
-	public IMessage ToPacket(string jsonStr)
-	{
-		JsonText = jsonStr;
-		return (IMessage)JsonConvert.DeserializeObject(jsonStr, Type)!;
-	}
+        // Fallback for non-IMessage types
+        JsonText = JsonConvert.SerializeObject(instance, Formatting.Indented);
+        return JsonText;
+    }
+
+    public IMessage ToPacket(string jsonStr)
+    {
+        JsonText = jsonStr;
+        return (IMessage)JsonConvert.DeserializeObject(jsonStr, Type)!;
+    }
 }

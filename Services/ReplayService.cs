@@ -1,9 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows.Media; // For Brush
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
@@ -29,7 +25,8 @@ namespace ProtoTestTool.Services
 
         public async Task ReplayAllAsync(List<RecordedPacket> packets, Func<IMessage, object?, Task> sendCallback, Action<string, Brush> logger)
         {
-            if (packets == null || packets.Count == 0) return;
+            if (packets.Count == 0) 
+                return;
 
             foreach (var record in packets)
             {
@@ -37,7 +34,7 @@ namespace ProtoTestTool.Services
                 if (record.Direction != "Outbound") continue;
 
                 // Resolve Type
-                var packetConvertor = ProtoLoaderManager.Instance.PacketsByMsgId.Values
+                var packetConvertor = ProtoLoaderManager.Instance.PacketsByName.Values
                     .FirstOrDefault(p => 
                     {
                         var desc = p.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;

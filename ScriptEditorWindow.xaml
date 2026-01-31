@@ -84,23 +84,44 @@
                  <RowDefinition Height="*"/>    <!-- Content -->
              </Grid.RowDefinitions>
 
-             <!-- Custom Tab Strip -->
-             <Border BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Margin="0,0,0,0">
-                 <StackPanel Orientation="Horizontal" Background="Transparent">
-                     <RadioButton Content="PacketRegistry" IsChecked="True" Checked="Tab_Checked" Tag="RegistryEditor" Style="{StaticResource EditorTabStyle}"/>
-                     <RadioButton Content="PacketHeader" Checked="Tab_Checked" Tag="HeaderEditor" Style="{StaticResource EditorTabStyle}"/>
-                     <RadioButton Content="PacketCodec" Checked="Tab_Checked" Tag="CodecEditor" Style="{StaticResource EditorTabStyle}"/>
-                     <RadioButton Content="PacketInterceptor" Checked="Tab_Checked" Tag="InterceptorEditor" Style="{StaticResource EditorTabStyle}"/>
-                 </StackPanel>
-             </Border>
+            <!-- Custom Tab Strip -->
+            <Border BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Margin="0,0,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-             <!-- Editor Content Area (All loaded but hidden) -->
-             <Grid Grid.Row="1">
-                 <wv2:WebView2 x:Name="RegistryEditor" Visibility="Visible"/>
-                 <wv2:WebView2 x:Name="HeaderEditor" Visibility="Hidden"/>
-                 <wv2:WebView2 x:Name="CodecEditor" Visibility="Hidden"/>
-                 <wv2:WebView2 x:Name="InterceptorEditor" Visibility="Hidden"/>
-             </Grid>
+                    <!-- Tabs ScrollViewer in case of many files -->
+                    <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" PanningMode="HorizontalOnly">
+                        <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Background="Transparent">
+                            <RadioButton Content="PacketLoader" IsChecked="True" Checked="Tab_Checked" Tag="PacketLoader.cs" Style="{StaticResource EditorTabStyle}"/>
+                            <RadioButton Content="PacketHeader" Checked="Tab_Checked" Tag="PacketHeader.cs" Style="{StaticResource EditorTabStyle}"/>
+                            <RadioButton Content="PacketCodec" Checked="Tab_Checked" Tag="PacketCodec.cs" Style="{StaticResource EditorTabStyle}"/>
+                            <!-- Dynamic Tabs will be added here -->
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Add Button -->
+                    <ui:Button Grid.Column="1" Icon="Add24" Appearance="Transparent" VerticalAlignment="Center" Margin="5,0,5,0" ToolTip="Add Interceptor">
+                        <ui:Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Proxy Interceptor" Click="AddProxyInterceptor_Click"/>
+                                <MenuItem Header="Client Interceptor" Click="AddClientInterceptor_Click"/>
+                                <MenuItem Header="Replay Interceptor" Click="AddReplayInterceptor_Click"/>
+                            </ContextMenu>
+                        </ui:Button.ContextMenu>
+                    </ui:Button>
+                </Grid>
+            </Border>
+
+            <!-- Editor Content Area -->
+            <Grid Grid.Row="1" x:Name="EditorsGrid">
+                <wv2:WebView2 x:Name="LoaderEditor" Visibility="Visible"/>
+                <wv2:WebView2 x:Name="HeaderEditor" Visibility="Hidden"/>
+                <wv2:WebView2 x:Name="CodecEditor" Visibility="Hidden"/>
+                <!-- Dynamic WebViews will be added here -->
+            </Grid>
          </Grid>
  
          <!-- 2. Splitter -->

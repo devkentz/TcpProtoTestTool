@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="nul" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Dotnet.Script.Core" Version="1.6.0" />
     <PackageReference Include="Dotnet.Script.DependencyModel" Version="1.6.0" />
     <PackageReference Include="Dotnet.Script.DependencyModel.Nuget" Version="1.6.0" />

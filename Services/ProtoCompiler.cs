@@ -136,12 +136,27 @@ namespace ProtoTestTool.Services
             var syntaxTrees = csFiles.Select(f => CSharpSyntaxTree.ParseText(File.ReadAllText(f)));
 
             var references = new List<MetadataReference>();
-            // Add all loaded assemblies as references to ensure types are available
+            var addedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Add runtime BCL references from TRUSTED_PLATFORM_ASSEMBLIES
+            var trustedAssemblies = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
+            if (!string.IsNullOrEmpty(trustedAssemblies))
+            {
+                foreach (var path in trustedAssemblies.Split(Path.PathSeparator))
+                {
+                    if (!string.IsNullOrEmpty(path) && File.Exists(path) && addedPaths.Add(path))
+                    {
+                        try { references.Add(MetadataReference.CreateFromFile(path)); } catch { }
+                    }
+                }
+            }
+
+            // Add loaded assemblies (covers Google.Protobuf, etc.)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                if (!asm.IsDynamic && !string.IsNullOrEmpty(asm.Location) && File.Exists(asm.Location))
+                if (!asm.IsDynamic && !string.IsNullOrEmpty(asm.Location) && File.Exists(asm.Location) && addedPaths.Add(asm.Location))
                 {
-                    references.Add(MetadataReference.CreateFromFile(asm.Location));
+                    try { references.Add(MetadataReference.CreateFromFile(asm.Location)); } catch { }
                 }
             }
 

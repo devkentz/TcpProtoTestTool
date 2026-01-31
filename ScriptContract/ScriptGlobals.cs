@@ -11,11 +11,7 @@ namespace ProtoTestTool.ScriptContract
         // Global Singletons (Injected)
         public static IScriptStateStore State { get; set; } = null!;
         public static IScriptLogger Log { get; set; } = null!;
-
-        // Mode Specific APIs
-        public static IClientApi? Client { get; private set; }
-        public static IProxyApi? Proxy { get; private set; }
-        
+ 
         // System Services
         public static IPacketRegistry Registry { get; set; } = null!;
         public static IPacketCodec Codec { get; set; } = null!;
@@ -25,13 +21,7 @@ namespace ProtoTestTool.ScriptContract
             State = state;
             Log = log;
         }
-
-        public static void SetApis(IClientApi? client, IProxyApi? proxy)
-        {
-            Client = client;
-            Proxy = proxy;
-        }
-
+ 
         public static void SetServices(IPacketRegistry registry, IPacketCodec codec)
         {
             Registry = registry;
