@@ -90,7 +90,6 @@ namespace ProtoTestTool
                 else
                 {
                     registry = ProtoLoaderManager.Instance;
-                    ExecutePacketLoaders(assembly, registry, logAction);
                 }
 
                 var codecType = assembly.GetTypes()
@@ -185,26 +184,6 @@ namespace ProtoTestTool
             var assembly = _workspaceAssemblyContext.LoadFromFile(outputDll);
             _scriptAssembly = assembly;
             return assembly;
-        }
-
-        private void ExecutePacketLoaders(Assembly assembly, IPacketRegistry registry, Action<string, Brush> logAction)
-        {
-            var loaderTypes = assembly.GetTypes()
-                .Where(t => typeof(IPacketLoader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-
-            foreach (var t in loaderTypes)
-            {
-                try
-                {
-                    var loader = (IPacketLoader)Activator.CreateInstance(t)!;
-                    loader.Load(registry);
-                    logAction($"[PacketLoader] Executed {t.Name}", Brushes.DeepSkyBlue);
-                }
-                catch (Exception ex)
-                {
-                    logAction($"[PacketLoader] Failed to execute {t.Name}: {ex.Message}", Brushes.Red);
-                }
-            }
         }
 
         private void InitializeScriptGlobals(IPacketRegistry registry, IPacketCodec codec)
@@ -342,9 +321,9 @@ namespace ProtoTestTool
             if (!Directory.Exists(scriptsDir)) Directory.CreateDirectory(scriptsDir);
 
             // Create default .cs files
-            CreateIfMissing(scriptsDir, "PacketLoader.cs", "PacketLoader");
             CreateIfMissing(scriptsDir, "PacketHeader.cs", "PacketHeader");
             CreateIfMissing(scriptsDir, "PacketCodec.cs", "PacketCodec");
+            CreateIfMissing(scriptsDir, "PacketRegistry.cs", "PacketRegistry");
             CreateIfMissing(scriptsDir, "PacketInterceptor.cs", "PacketInterceptor");
 
             var configPath = Path.Combine(workspacePath, "workspace_config.json");

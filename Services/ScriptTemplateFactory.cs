@@ -8,55 +8,13 @@ namespace ProtoTestTool.Services
         {
             return featureName switch
             {
-                "PacketLoader" => GetPacketLoaderTemplate(),
                 "PacketHeader" => GetPacketHeaderTemplate(),
                 "PacketCodec" => GetPacketCodecTemplate(),
+                "PacketRegistry" => GetPacketRegistryTemplate(),
                 "PacketInterceptor" => GetInterceptorTemplate(),
                 _ => "// Not found"
             };
         }
-
-        public static string GetPacketLoaderTemplate() =>
-@"using System;
-using System.Collections.Generic;
-using System.Linq;
-using ProtoTestTool.ScriptContract;
-using Google.Protobuf;
-
-// [Mandatory] Packet Registration Logic
-public class PacketLoader : IPacketLoader
-{
-    // [Mandatory] Implement this method to register your packet types
-    public void Load(IPacketRegistry registry)
-    {
-        // Strategy 1: Manual Registration
-        // registry.Register(1001, typeof(LoginReq), isRequest: true);
-        
-        // Strategy 2: Bulk Registration by Convention
-        // Implement your own logic to determine ID and Direction
-        /*
-        foreach (var type in registry.GetMessageTypes())
-        {
-            if (type.Name.EndsWith(""Req""))
-            {
-                int id = GetIdFromType(type);
-                registry.Register(id, type, isRequest: true);
-            }
-            else if (type.Name.EndsWith(""Res""))
-            {
-                int id = GetIdFromType(type);
-                registry.Register(id, type, isRequest: false);
-            }
-        }
-        */
-    }
-
-    private int GetIdFromType(Type type)
-    {
-        // Example: return (int)type.GetField(""MsgId"").GetValue(null);
-        return 0;
-    }
-}";
 
         public static string GetPacketHeaderTemplate() =>
 @"using System;
@@ -94,6 +52,40 @@ public class PacketCodec : IPacketCodec
         // Implement your encoding logic here
         throw new NotImplementedException();
     }
+}";
+
+        public static string GetPacketRegistryTemplate() =>
+@"using System;
+using System.Collections.Generic;
+using System.Linq;
+using Google.Protobuf;
+using ProtoTestTool.ScriptContract;
+
+// [Optional] Custom Packet Registry
+// Implement this to manually register packet types with IDs.
+// If not provided, the tool uses the default proto-based registry.
+public class PacketRegistry : IPacketRegistry
+{
+    private readonly Dictionary<int, Type> _idToType = new();
+    private readonly Dictionary<Type, int> _typeToId = new();
+    private readonly Dictionary<int, MessageParser> _parsers = new();
+
+    public void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null)
+    {
+        _idToType[msgId] = type;
+        _typeToId[type] = msgId;
+
+        var descriptor = ((MessageDescriptor?)type
+            .GetProperty(""Descriptor"", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            ?.GetValue(null));
+        if (descriptor != null)
+            _parsers[msgId] = descriptor.Parser;
+    }
+
+    public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
+    public Type? GetMessageType(int msgId) => _idToType.GetValueOrDefault(msgId);
+    public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type);
+    public MessageParser GetParserById(int msgId) => _parsers[msgId];
 }";
 
         public static string GetInterceptorTemplate() =>

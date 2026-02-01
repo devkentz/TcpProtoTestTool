@@ -29,7 +29,7 @@ namespace ProtoTestTool
         private RoslynIntelliSenseService? _intelliSense;
 
         // Core Script file names (fixed set)
-        private static readonly string[] CoreScripts = ["PacketCodec.cs", "PacketHeader.cs", "PacketLoader.cs"];
+        private static readonly string[] CoreScripts = ["PacketCodec.cs", "PacketHeader.cs", "PacketRegistry.cs"];
 
         public event Action? OnRequestCompilation;
 
@@ -260,6 +260,15 @@ namespace ProtoTestTool
                 AddInterceptorToSidebar(fileName);
                 AddInterceptorTab(fileName);
             }
+
+            UpdateTabStripVisibility();
+        }
+
+        private void UpdateTabStripVisibility()
+        {
+            TabStripBorder.Visibility = TabsPanel.Children.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         private void AddInterceptorToSidebar(string fileName)
@@ -385,6 +394,7 @@ namespace ProtoTestTool
                 .FirstOrDefault(b => b.Tag?.ToString() == fileName);
             if (tabToRemove != null)
                 TabsPanel.Children.Remove(tabToRemove);
+            UpdateTabStripVisibility();
 
             // If this was the active file, switch to another
             if (_activeFileName == fileName)
@@ -440,6 +450,7 @@ namespace ProtoTestTool
 
             AddInterceptorToSidebar(fileName);
             AddInterceptorTab(fileName);
+            UpdateTabStripVisibility();
 
             // Switch to the new file and select its tab
             foreach (var tabBorder in TabsPanel.Children.OfType<Border>())

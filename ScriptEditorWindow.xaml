@@ -178,11 +178,11 @@
                                     <TextBlock Text="  IHeader" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="CoreLoaderBtn" Tag="PacketLoader.cs" Click="CoreScript_Click" Style="{StaticResource SidebarItemStyle}">
+                            <Button x:Name="CoreRegistryBtn" Tag="PacketRegistry.cs" Click="CoreScript_Click" Style="{StaticResource SidebarItemStyle}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="PacketLoader"/>
-                                    <TextBlock Text="  IPacketLoader" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PacketRegistry"/>
+                                    <TextBlock Text="  IPacketRegistry" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Button>
                         </StackPanel>
@@ -237,8 +237,8 @@
                     <RowDefinition Height="150"/>    <!-- Output -->
                 </Grid.RowDefinitions>
 
-                <!-- Interceptor Tab Strip -->
-                <Border Grid.Row="0" x:Name="TabStripBorder" BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Background="#252526">
+                <!-- Interceptor Tab Strip (hidden when empty) -->
+                <Border Grid.Row="0" x:Name="TabStripBorder" BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Background="#252526" Visibility="Collapsed">
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                         <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Background="Transparent"/>
                     </ScrollViewer>
