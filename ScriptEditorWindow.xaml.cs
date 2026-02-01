@@ -18,15 +18,18 @@ namespace ProtoTestTool
         private readonly string _workspacePath;
         private readonly string _workspaceRoot;
         private readonly ScriptLoader _scriptLoader;
-        private readonly ScriptDebugger _debugger = new();
-        private readonly VsCodeServerManager _vsCodeManager = new();
 
-        private EditorMode _editorMode = EditorMode.Loading;
-
-        // Fallback: Monaco editor state
-        private readonly Dictionary<string, Microsoft.Web.WebView2.Wpf.WebView2> _editors = new();
+        // Single WebView2 + file content cache
+        private readonly Dictionary<string, string> _fileContents = new();
         private readonly HashSet<string> _dirtyFiles = new();
+        private string? _activeFileName;
+        private bool _editorReady;
+
+        // Roslyn IntelliSense
         private RoslynIntelliSenseService? _intelliSense;
+
+        // Core Script file names (fixed set)
+        private static readonly string[] CoreScripts = ["PacketCodec.cs", "PacketHeader.cs", "PacketLoader.cs"];
 
         public event Action? OnRequestCompilation;
 
@@ -38,114 +41,43 @@ namespace ProtoTestTool
             _scriptLoader = scriptLoader;
 
             Loaded += ScriptEditorWindow_Loaded;
-            InitializeDebugger();
         }
 
         private async void ScriptEditorWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (_vsCodeManager.IsVsCodeInstalled)
-            {
-                await StartVsCodeModeAsync();
-            }
-            else
-            {
-                await StartMonacoFallbackAsync();
-            }
+            await InitializeEditorAsync();
         }
 
-        // ========== VS Code Server Mode ==========
+        // ========== Initialization ==========
 
-        private async Task StartVsCodeModeAsync()
+        private async Task InitializeEditorAsync()
         {
-            _editorMode = EditorMode.Loading;
             LoadingOverlay.Visibility = Visibility.Visible;
-            LoadingText.Text = "Starting VS Code Server...";
+            LoadingText.Text = "Initializing Editor...";
 
             try
             {
-                // Ensure workspace setup (.csproj, .vscode settings)
-                VsCodeWorkspaceSetup.EnsureWorkspaceSetup(_workspaceRoot);
-                LoadingSubText.Text = "Workspace configured";
+                await InitializeIntelliSenseAsync();
+                await InitializeWebViewAsync();
+                LoadAllFiles();
+                RefreshInterceptorList();
+                RefreshLibsList();
 
-                _vsCodeManager.OutputReceived += msg =>
-                    Dispatcher.Invoke(() => AppendLog($"[Server] {msg}", Brushes.Gray));
+                // Open first core script by default
+                if (_fileContents.ContainsKey(CoreScripts[0]))
+                    await SwitchToFileAsync(CoreScripts[0]);
+                else if (_fileContents.Count > 0)
+                    await SwitchToFileAsync(_fileContents.Keys.First());
 
-                _vsCodeManager.ServerStopped += () =>
-                    Dispatcher.Invoke(() =>
-                    {
-                        ServerStatusDot.Fill = Brushes.Red;
-                        ServerStatusText.Text = "Server Stopped";
-                        RestartServerBtn.Visibility = Visibility.Visible;
-                    });
-
-                LoadingText.Text = "Launching VS Code Server...";
-                LoadingSubText.Text = "This may take a moment on first launch";
-
-                var port = await _vsCodeManager.StartServerAsync(_workspacePath);
-
-                _editorMode = EditorMode.VsCode;
-                LoadingText.Text = "Loading VS Code...";
-                LoadingSubText.Text = $"Port {port}";
-
-                // Navigate WebView2 to VS Code
-                var env = await CoreWebView2Environment.CreateAsync();
-                await VsCodeWebView.EnsureCoreWebView2Async(env);
-                VsCodeWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
-                VsCodeWebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
-                VsCodeWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-
-                var folderPath = _workspacePath.Replace("\\", "/");
-                var url = $"http://127.0.0.1:{port}/?folder={folderPath}";
-                VsCodeWebView.Source = new Uri(url);
-
-                // Wait for VS Code to finish loading
-                VsCodeWebView.NavigationCompleted += (s, args) =>
-                {
-                    Dispatcher.Invoke(() =>
-                    {
-                        LoadingOverlay.Visibility = Visibility.Collapsed;
-                        VsCodeWebView.Visibility = Visibility.Visible;
-
-                        ServerStatusDot.Fill = new SolidColorBrush(Color.FromRgb(78, 201, 176));
-                        ServerStatusText.Text = "VS Code Server";
-                        EditorModeText.Text = "VS Code";
-                        PortText.Text = $"Port {port}";
-                        RestartServerBtn.Visibility = Visibility.Visible;
-                    });
-                };
-
-                AppendLog($"VS Code Server started on port {port}", Brushes.LimeGreen);
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+                EditorWebView.Visibility = Visibility.Visible;
+                SetStatus("Ready");
             }
             catch (Exception ex)
             {
-                AppendLog($"VS Code Server failed: {ex.Message}", Brushes.Red);
-                AppendLog("Falling back to built-in Monaco editor...", Brushes.Orange);
-                await StartMonacoFallbackAsync();
+                AppendLog($"Initialization failed: {ex.Message}", Brushes.Red);
+                LoadingText.Text = $"Error: {ex.Message}";
             }
-        }
-
-        // ========== Monaco Fallback Mode ==========
-
-        private async Task StartMonacoFallbackAsync()
-        {
-            _editorMode = EditorMode.Monaco;
-            LoadingOverlay.Visibility = Visibility.Collapsed;
-            VsCodeWebView.Visibility = Visibility.Collapsed;
-            MonacoFallbackGrid.Visibility = Visibility.Visible;
-
-            ServerStatusDot.Fill = Brushes.Orange;
-            ServerStatusText.Text = "Built-in Editor";
-            EditorModeText.Text = "Monaco (Fallback)";
-            PortText.Text = "";
-
-            if (!_vsCodeManager.IsVsCodeInstalled)
-            {
-                AppendLog("VS Code not found. Using built-in Monaco editor.", Brushes.Orange);
-                AppendLog("Install VS Code for full IDE experience: https://code.visualstudio.com", Brushes.Gray);
-            }
-
-            await InitializeIntelliSenseAsync();
-            await InitializeMonacoEditorsAsync();
         }
 
         private async Task InitializeIntelliSenseAsync()
@@ -168,356 +100,132 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task InitializeMonacoEditorsAsync()
+        private async Task InitializeWebViewAsync()
         {
-            TabsPanel.Children.Clear();
-            foreach (var editor in _editors.Values)
-                editor.Dispose();
-            foreach (var child in EditorsGrid.Children.OfType<Microsoft.Web.WebView2.Wpf.WebView2>().ToList())
-                EditorsGrid.Children.Remove(child);
-            _editors.Clear();
-            _dirtyFiles.Clear();
-
             var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
             if (!File.Exists(editorPath))
             {
                 AppendLog($"Editor host not found: {editorPath}", Brushes.Red);
                 return;
             }
-            var editorUrl = new Uri(editorPath).AbsoluteUri;
 
+            var env = await CoreWebView2Environment.CreateAsync();
+            await EditorWebView.EnsureCoreWebView2Async(env);
+            EditorWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
+            EditorWebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
+            EditorWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+
+            var tcs = new TaskCompletionSource<bool>();
+
+            EditorWebView.WebMessageReceived += async (s, e) =>
+            {
+                try
+                {
+                    await HandleMonacoMessageAsync(e.WebMessageAsJson);
+                    if (e.WebMessageAsJson.Contains("\"type\":\"ready\""))
+                        tcs.TrySetResult(true);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Editor Msg Error] {ex.Message}");
+                }
+            };
+
+            EditorWebView.Source = new Uri(new Uri(editorPath).AbsoluteUri);
+
+            // Wait for editor ready (max 10s)
+            await Task.WhenAny(tcs.Task, Task.Delay(10000));
+            _editorReady = true;
+        }
+
+        private void LoadAllFiles()
+        {
+            _fileContents.Clear();
             if (!Directory.Exists(_workspacePath)) return;
 
             var files = Directory.GetFiles(_workspacePath, "*.cs");
-            bool isFirst = true;
-
             foreach (var file in files)
             {
                 var fileName = Path.GetFileName(file);
-                await AddMonacoTab(fileName, editorUrl, isFirst);
-                isFirst = false;
-            }
-        }
-
-        private async Task AddMonacoTab(string fileName, string editorUrl, bool isSelected = false)
-        {
-            var webView = new Microsoft.Web.WebView2.Wpf.WebView2
-            {
-                Visibility = isSelected ? Visibility.Visible : Visibility.Hidden
-            };
-            EditorsGrid.Children.Add(webView);
-            _editors[fileName] = webView;
-
-            var radio = new RadioButton
-            {
-                Content = Path.GetFileNameWithoutExtension(fileName),
-                Tag = fileName,
-                IsChecked = isSelected
-            };
-            radio.Checked += MonacoTab_Checked;
-            TabsPanel.Children.Add(radio);
-
-            try
-            {
-                var tcs = new TaskCompletionSource<bool>();
-
-                webView.WebMessageReceived += async (s, e) =>
-                {
-                    try
-                    {
-                        await HandleMonacoMessageAsync(webView, e.WebMessageAsJson, fileName);
-                        if (e.WebMessageAsJson.Contains("\"type\":\"ready\""))
-                            tcs.TrySetResult(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[Editor Msg Error] {ex.Message}");
-                    }
-                };
-
-                webView.Source = new Uri(editorUrl);
-
-                var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000));
-                await LoadFileIntoMonaco(webView, fileName);
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Failed to init editor for {fileName}: {ex.Message}", Brushes.Red);
-            }
-        }
-
-        private async Task LoadFileIntoMonaco(Microsoft.Web.WebView2.Wpf.WebView2 webView, string fileName)
-        {
-            var safeFileName = JsonSerializer.Serialize(fileName);
-            await webView.ExecuteScriptAsync($"setFileName({safeFileName})");
-
-            var path = Path.Combine(_workspacePath, fileName);
-            if (File.Exists(path))
-            {
-                var content = await File.ReadAllTextAsync(path);
-                var safeContent = JsonSerializer.Serialize(content);
-                await webView.ExecuteScriptAsync($"setContent({safeContent})");
+                var content = File.ReadAllText(file);
+                _fileContents[fileName] = content;
                 _intelliSense?.UpdateDocument(fileName, content);
             }
         }
 
-        private void MonacoTab_Checked(object sender, RoutedEventArgs e)
-        {
-            if (sender is not RadioButton button || button.Tag == null) return;
-            string fileName = button.Tag.ToString()!;
+        // ========== File Switching (Single WebView2) ==========
 
-            foreach (var kvp in _editors)
+        private async Task SwitchToFileAsync(string fileName)
+        {
+            if (!_editorReady || !_fileContents.ContainsKey(fileName)) return;
+
+            // Save current file content to memory
+            if (_activeFileName != null)
             {
-                kvp.Value.Visibility = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase)
-                    ? Visibility.Visible : Visibility.Hidden;
+                var currentContent = await GetEditorContent();
+                _fileContents[_activeFileName] = currentContent;
             }
+
+            // Load new file
+            _activeFileName = fileName;
+            var content = _fileContents.GetValueOrDefault(fileName, "");
+            var safeContent = JsonSerializer.Serialize(content);
+            var safeFileName = JsonSerializer.Serialize(fileName);
+
+            await EditorWebView.ExecuteScriptAsync($"setContent({safeContent})");
+            await EditorWebView.ExecuteScriptAsync($"setFileName({safeFileName})");
+
+            // Update UI indicators
+            UpdateActiveIndicators(fileName);
         }
 
-        // ========== Monaco Message Handler (Fallback) ==========
-
-        private async Task HandleMonacoMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
+        private void UpdateActiveIndicators(string fileName)
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
+            bool isCoreScript = CoreScripts.Contains(fileName);
 
-            if (!root.TryGetProperty("type", out var typeProp)) return;
-            var type = typeProp.GetString();
-
-            switch (type)
+            // Update Core Script sidebar highlight
+            foreach (var child in CoreScriptsPanel.Children.OfType<Button>())
             {
-                case "requestCompletions":
-                    await HandleCompletionRequestAsync(webView, root, fileName);
-                    break;
-                case "requestSignatureHelp":
-                    await HandleSignatureHelpRequestAsync(webView, root, fileName);
-                    break;
-                case "requestDiagnostics":
-                    await HandleDiagnosticsRequestAsync(webView, root, fileName);
-                    break;
-                case "requestHover":
-                    await HandleHoverRequestAsync(webView, root, fileName);
-                    break;
-                case "requestDefinition":
-                    await HandleDefinitionRequestAsync(webView, root, fileName);
-                    break;
-                case "requestReferences":
-                    await HandleReferencesRequestAsync(webView, root, fileName);
-                    break;
-                case "requestCodeActions":
-                    await HandleCodeActionsRequestAsync(webView, root, fileName);
-                    break;
-                case "applyCodeAction":
-                    await HandleApplyCodeActionAsync(webView, root, fileName);
-                    break;
-                case "requestFormatting":
-                    await HandleFormattingRequestAsync(webView, root, fileName);
-                    break;
-                case "requestRename":
-                    await HandleRenameRequestAsync(webView, root, fileName);
-                    break;
-                case "requestSymbols":
-                    await HandleSymbolsRequestAsync(webView, root, fileName);
-                    break;
-                case "command":
-                    HandleMonacoCommand(root);
-                    break;
-                case "contentChanged":
-                    HandleMonacoContentChanged(root);
-                    break;
-                case "breakpoint":
-                    HandleMonacoBreakpoint(root);
-                    break;
+                bool isActive = child.Tag?.ToString() == fileName;
+                child.Background = isActive ? new SolidColorBrush(Color.FromRgb(0x37, 0x37, 0x3D)) : Brushes.Transparent;
             }
-        }
 
-        private async Task HandleCompletionRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
-            var jsonResult = JsonSerializer.Serialize(completions);
-            await webView.ExecuteScriptAsync($"setCompletions({jsonResult})");
-        }
-
-        private async Task HandleSignatureHelpRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
-            var jsonResult = signatureHelp != null ? JsonSerializer.Serialize(signatureHelp) : "null";
-            await webView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
-        }
-
-        private async Task HandleDiagnosticsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
-            var jsonResult = JsonSerializer.Serialize(diagnostics);
-            await webView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
-        }
-
-        private async Task HandleHoverRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var hover = await _intelliSense.GetHoverAsync(fileName, position);
-            var jsonResult = hover != null ? JsonSerializer.Serialize(hover) : "null";
-            await webView.ExecuteScriptAsync($"setHover({jsonResult})");
-        }
-
-        private async Task HandleDefinitionRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var definition = await _intelliSense.GetDefinitionAsync(fileName, position);
-            var jsonResult = definition != null ? JsonSerializer.Serialize(definition) : "null";
-            await webView.ExecuteScriptAsync($"setDefinition({jsonResult})");
-        }
-
-        private async Task HandleReferencesRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var references = await _intelliSense.GetReferencesAsync(fileName, position);
-            var jsonResult = JsonSerializer.Serialize(references);
-            await webView.ExecuteScriptAsync($"setReferences({jsonResult})");
-        }
-
-        private async Task HandleCodeActionsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var startPos = root.GetProperty("startPosition").GetInt32();
-            var endPos = root.GetProperty("endPosition").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var actions = await _intelliSense.GetCodeActionsAsync(fileName, startPos, endPos);
-            var jsonResult = JsonSerializer.Serialize(actions);
-            await webView.ExecuteScriptAsync($"setCodeActions({jsonResult})");
-        }
-
-        private async Task HandleApplyCodeActionAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var actionIndex = root.GetProperty("actionIndex").GetInt32();
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var result = await _intelliSense.ApplyCodeActionAsync(fileName, actionIndex);
-            if (result != null)
+            // Update Interceptor tabs
+            if (isCoreScript)
             {
-                var safeContent = JsonSerializer.Serialize(result.NewContent);
-                await webView.ExecuteScriptAsync($"setContent({safeContent})");
-            }
-        }
-
-        private async Task HandleFormattingRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var edits = await _intelliSense.FormatDocumentAsync(fileName);
-            var jsonResult = JsonSerializer.Serialize(edits);
-            await webView.ExecuteScriptAsync($"setFormatting({jsonResult})");
-        }
-
-        private async Task HandleRenameRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var position = root.GetProperty("position").GetInt32();
-            var newName = root.GetProperty("newName").GetString() ?? "";
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var result = await _intelliSense.RenameSymbolAsync(fileName, position, newName);
-            var jsonResult = result != null ? JsonSerializer.Serialize(result) : "{ \"edits\": [] }";
-            await webView.ExecuteScriptAsync($"setRenameEdits({jsonResult})");
-        }
-
-        private async Task HandleSymbolsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
-        {
-            if (_intelliSense == null) return;
-            var content = root.GetProperty("content").GetString() ?? "";
-            _intelliSense.UpdateDocument(fileName, content);
-            var symbols = await _intelliSense.GetDocumentSymbolsAsync(fileName);
-            var jsonResult = JsonSerializer.Serialize(symbols);
-            await webView.ExecuteScriptAsync($"setDocumentSymbols({jsonResult})");
-        }
-
-        private void HandleMonacoCommand(JsonElement root)
-        {
-            var command = root.GetProperty("command").GetString();
-            Dispatcher.Invoke(() =>
-            {
-                switch (command)
+                // Deselect all interceptor tabs
+                foreach (var tab in TabsPanel.Children.OfType<Border>())
                 {
-                    case "save":
-                        _ = SaveCurrentMonacoFileAsync();
-                        break;
-                    case "build":
-                        BuildBtn_Click(this, new RoutedEventArgs());
-                        break;
+                    var sp = tab.Child as StackPanel;
+                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                    if (radio != null) radio.IsChecked = false;
                 }
-            });
-        }
-
-        private void HandleMonacoContentChanged(JsonElement root)
-        {
-            if (root.TryGetProperty("fileName", out var fn))
-            {
-                var fileName = fn.GetString();
-                if (!string.IsNullOrEmpty(fileName))
-                    Dispatcher.Invoke(() => MarkMonacoDirty(fileName));
             }
-        }
-
-        private void HandleMonacoBreakpoint(JsonElement root)
-        {
-            var line = root.GetProperty("line").GetInt32();
-            var enabled = root.GetProperty("enabled").GetBoolean();
-
-            if (enabled)
-                _debugger.AddBreakpoint(line);
             else
-                _debugger.RemoveBreakpoint(line);
-        }
-
-        private void MarkMonacoDirty(string fileName)
-        {
-            if (_dirtyFiles.Add(fileName))
             {
-                var tab = TabsPanel.Children.OfType<RadioButton>()
-                    .FirstOrDefault(t => t.Tag?.ToString() == fileName);
-                if (tab != null)
-                    tab.Content = Path.GetFileNameWithoutExtension(fileName) + " \u25cf";
+                // Deselect core sidebar
+                foreach (var child in CoreScriptsPanel.Children.OfType<Button>())
+                    child.Background = Brushes.Transparent;
+
+                // Select matching interceptor tab
+                foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+                {
+                    var sp = tabBorder.Child as StackPanel;
+                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                    if (radio != null)
+                        radio.IsChecked = radio.Tag?.ToString() == fileName;
+                }
             }
+
+            // Update title
+            Title = $"Script Editor - {fileName}";
         }
 
-        private void MarkMonacoClean(string fileName)
-        {
-            _dirtyFiles.Remove(fileName);
-            var tab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
-            if (tab != null)
-                tab.Content = Path.GetFileNameWithoutExtension(fileName);
-        }
-
-        // ========== Monaco File Operations ==========
-
-        private async Task<string> GetMonacoEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
+        private async Task<string> GetEditorContent()
         {
             try
             {
-                var result = await webView.ExecuteScriptAsync("getContent()");
+                var result = await EditorWebView.ExecuteScriptAsync("getContent()");
                 return JsonSerializer.Deserialize<string>(result) ?? string.Empty;
             }
             catch
@@ -526,71 +234,354 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task SaveCurrentMonacoFileAsync()
+        // ========== Core Script Click ==========
+
+        private void CoreScript_Click(object sender, RoutedEventArgs e)
         {
-            var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.IsChecked == true);
-            if (activeTab?.Tag == null) return;
-            var fileName = activeTab.Tag.ToString()!;
-
-            if (!_editors.TryGetValue(fileName, out var editor)) return;
-            var code = await GetMonacoEditorContent(editor);
-            if (string.IsNullOrWhiteSpace(code)) return;
-
-            var path = Path.Combine(_workspacePath, fileName);
-            await File.WriteAllTextAsync(path, code);
-            MarkMonacoClean(fileName);
+            if (sender is not Button btn || btn.Tag == null) return;
+            var fileName = btn.Tag.ToString()!;
+            _ = SwitchToFileAsync(fileName);
         }
 
-        private async Task SaveAllMonacoFilesAsync()
-        {
-            foreach (var kvp in _editors)
-            {
-                var code = await GetMonacoEditorContent(kvp.Value);
-                if (string.IsNullOrWhiteSpace(code)) continue;
+        // ========== Interceptor Tab Management ==========
 
-                var path = Path.Combine(_workspacePath, kvp.Key);
-                await File.WriteAllTextAsync(path, code);
-                MarkMonacoClean(kvp.Key);
+        private void RefreshInterceptorList()
+        {
+            InterceptorListPanel.Children.Clear();
+            TabsPanel.Children.Clear();
+
+            var interceptorFiles = _fileContents.Keys
+                .Where(f => !CoreScripts.Contains(f))
+                .OrderBy(f => f)
+                .ToList();
+
+            foreach (var fileName in interceptorFiles)
+            {
+                AddInterceptorToSidebar(fileName);
+                AddInterceptorTab(fileName);
             }
         }
 
-        // ========== Debugger ==========
-
-        private void InitializeDebugger()
+        private void AddInterceptorToSidebar(string fileName)
         {
-            _debugger.BreakpointHit += (line, vars) =>
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var itemBtn = new Button
             {
-                Dispatcher.Invoke(() =>
+                Tag = fileName,
+                Style = (Style)FindResource("SidebarItemStyle"),
+                Content = new StackPanel
                 {
-                    VariablesListView.ItemsSource = vars;
-                    DebugConsoleTab.IsChecked = true;
-                    ContinueBtn.IsEnabled = true;
-                    StopDebugBtn.IsEnabled = true;
-                    AppendLog($"Breakpoint hit at line {line}", Brushes.Yellow);
-                });
+                    Orientation = Orientation.Horizontal,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "\uE943",
+                            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                            FontSize = 12,
+                            Foreground = new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA)),
+                            Margin = new Thickness(0, 0, 6, 0),
+                            VerticalAlignment = VerticalAlignment.Center
+                        },
+                        new TextBlock { Text = Path.GetFileNameWithoutExtension(fileName) }
+                    }
+                }
             };
+            itemBtn.Click += InterceptorSidebar_Click;
+            Grid.SetColumn(itemBtn, 0);
 
-            _debugger.OutputReceived += output =>
-                Dispatcher.Invoke(() => AppendLog(output.TrimEnd(), Brushes.LightGray));
-
-            _debugger.ErrorOccurred += error =>
-                Dispatcher.Invoke(() => AppendLog($"[Error] {error}", Brushes.Red));
-
-            _debugger.ExecutionCompleted += () =>
+            var deleteBtn = new Button
             {
-                Dispatcher.Invoke(() =>
-                {
-                    ContinueBtn.IsEnabled = false;
-                    StopDebugBtn.IsEnabled = false;
-                    DebugBtn.IsEnabled = true;
-                    SetStatus("Ready");
-                    AppendLog("Debug session ended.", Brushes.Gray);
-                });
+                Tag = fileName,
+                Content = "\u2715",
+                Style = (Style)FindResource("DeleteBtnStyle")
             };
+            deleteBtn.Click += DeleteInterceptor_Click;
+            Grid.SetColumn(deleteBtn, 1);
+
+            grid.Children.Add(itemBtn);
+            grid.Children.Add(deleteBtn);
+
+            // Show delete button on hover
+            grid.MouseEnter += (s, e) => deleteBtn.Visibility = Visibility.Visible;
+            grid.MouseLeave += (s, e) => deleteBtn.Visibility = Visibility.Hidden;
+
+            InterceptorListPanel.Children.Add(grid);
         }
 
-        // ========== Toolbar Actions ==========
+        private void AddInterceptorTab(string fileName)
+        {
+            var tabBorder = new Border
+            {
+                Tag = fileName,
+                Background = Brushes.Transparent,
+                Padding = new Thickness(0)
+            };
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+
+            var radio = new RadioButton
+            {
+                Content = Path.GetFileNameWithoutExtension(fileName),
+                Tag = fileName,
+                Style = (Style)FindResource("InterceptorTabStyle"),
+                GroupName = "InterceptorTabs"
+            };
+            radio.Checked += InterceptorTab_Checked;
+
+            var closeBtn = new Button
+            {
+                Content = "\u2715",
+                Tag = fileName,
+                Style = (Style)FindResource("TabCloseBtnStyle"),
+                Margin = new Thickness(0, 0, 4, 0)
+            };
+            closeBtn.Click += TabClose_Click;
+
+            sp.Children.Add(radio);
+            sp.Children.Add(closeBtn);
+            tabBorder.Child = sp;
+
+            TabsPanel.Children.Add(tabBorder);
+        }
+
+        private void InterceptorSidebar_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag == null) return;
+            var fileName = btn.Tag.ToString()!;
+
+            // Also select the corresponding tab
+            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+            {
+                var sp = tabBorder.Child as StackPanel;
+                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                if (radio != null && radio.Tag?.ToString() == fileName)
+                {
+                    radio.IsChecked = true;
+                    return;
+                }
+            }
+
+            _ = SwitchToFileAsync(fileName);
+        }
+
+        private void InterceptorTab_Checked(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton radio || radio.Tag == null) return;
+            var fileName = radio.Tag.ToString()!;
+            _ = SwitchToFileAsync(fileName);
+        }
+
+        private void TabClose_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag == null) return;
+            var fileName = btn.Tag.ToString()!;
+
+            // Remove tab only (don't delete file)
+            var tabToRemove = TabsPanel.Children.OfType<Border>()
+                .FirstOrDefault(b => b.Tag?.ToString() == fileName);
+            if (tabToRemove != null)
+                TabsPanel.Children.Remove(tabToRemove);
+
+            // If this was the active file, switch to another
+            if (_activeFileName == fileName)
+            {
+                var firstTab = TabsPanel.Children.OfType<Border>().FirstOrDefault();
+                if (firstTab != null)
+                {
+                    var sp = firstTab.Child as StackPanel;
+                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                    if (radio != null)
+                    {
+                        radio.IsChecked = true;
+                        return;
+                    }
+                }
+                // Fall back to first core script
+                _ = SwitchToFileAsync(CoreScripts[0]);
+            }
+        }
+
+        // ========== Add Interceptor ==========
+
+        private void AddInterceptor_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.ContextMenu != null)
+            {
+                btn.ContextMenu.PlacementTarget = btn;
+                btn.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private async void AddInterceptorType_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem item || item.Tag == null) return;
+            var type = item.Tag.ToString()!;
+
+            var baseName = $"{type}Interceptor";
+            var fileName = $"{baseName}.cs";
+            var counter = 1;
+            while (_fileContents.ContainsKey(fileName))
+            {
+                fileName = $"{baseName}{counter++}.cs";
+            }
+
+            var className = Path.GetFileNameWithoutExtension(fileName);
+            var template = GenerateInterceptorTemplate(className);
+
+            var filePath = Path.Combine(_workspacePath, fileName);
+            await File.WriteAllTextAsync(filePath, template);
+
+            _fileContents[fileName] = template;
+            _intelliSense?.UpdateDocument(fileName, template);
+
+            AddInterceptorToSidebar(fileName);
+            AddInterceptorTab(fileName);
+
+            // Switch to the new file and select its tab
+            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+            {
+                var sp = tabBorder.Child as StackPanel;
+                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                if (radio != null && radio.Tag?.ToString() == fileName)
+                {
+                    radio.IsChecked = true;
+                    break;
+                }
+            }
+
+            AppendLog($"Created {fileName}", Brushes.Green);
+        }
+
+        private static string GenerateInterceptorTemplate(string className) =>
+$@"using System;
+using System.Threading.Tasks;
+using ProtoTestTool.ScriptContract;
+
+public class {className} : IPacketInterceptor
+{{
+    public ValueTask OnOutboundAsync(PacketContext context)
+    {{
+        return ValueTask.CompletedTask;
+    }}
+
+    public ValueTask OnInboundAsync(PacketContext context)
+    {{
+        return ValueTask.CompletedTask;
+    }}
+}}";
+
+        // ========== Delete Interceptor ==========
+
+        private async void DeleteInterceptor_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag == null) return;
+            var fileName = btn.Tag.ToString()!;
+
+            var result = MessageBox.Show($"Delete {fileName}?", "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes) return;
+
+            // Delete file from disk
+            var filePath = Path.Combine(_workspacePath, fileName);
+            if (File.Exists(filePath))
+            {
+                try { File.Delete(filePath); }
+                catch (Exception ex)
+                {
+                    AppendLog($"Delete failed: {ex.Message}", Brushes.Red);
+                    return;
+                }
+            }
+
+            _fileContents.Remove(fileName);
+            _dirtyFiles.Remove(fileName);
+
+            // Refresh sidebar and tabs
+            RefreshInterceptorList();
+
+            // Switch to another file if this was active
+            if (_activeFileName == fileName)
+            {
+                var firstInterceptor = _fileContents.Keys.FirstOrDefault(f => !CoreScripts.Contains(f));
+                await SwitchToFileAsync(firstInterceptor ?? CoreScripts[0]);
+            }
+
+            AppendLog($"Deleted {fileName}", Brushes.Orange);
+        }
+
+        // ========== Libs Section ==========
+
+        private void RefreshLibsList()
+        {
+            LibsListPanel.Children.Clear();
+            var libsDir = Path.Combine(_workspacePath, "Libs");
+            if (!Directory.Exists(libsDir))
+            {
+                LibsHeaderText.Text = "LIBS (0)";
+                return;
+            }
+
+            var dlls = Directory.GetFiles(libsDir, "*.dll", SearchOption.AllDirectories);
+            LibsHeaderText.Text = $"LIBS ({dlls.Length})";
+
+            foreach (var dll in dlls)
+            {
+                var tb = new TextBlock
+                {
+                    Text = Path.GetFileName(dll),
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x80, 0x80, 0x80)),
+                    FontSize = 11,
+                    Margin = new Thickness(4, 2, 0, 2)
+                };
+                LibsListPanel.Children.Add(tb);
+            }
+        }
+
+        // ========== Save ==========
+
+        private async void SaveBtn_Click(object sender, RoutedEventArgs e)
+        {
+            await SaveAllAsync();
+        }
+
+        private async Task SaveAllAsync()
+        {
+            // Save current editor content to memory first
+            if (_activeFileName != null && _editorReady)
+                _fileContents[_activeFileName] = await GetEditorContent();
+
+            var savedCount = 0;
+            foreach (var kvp in _fileContents)
+            {
+                var filePath = Path.Combine(_workspacePath, kvp.Key);
+                await File.WriteAllTextAsync(filePath, kvp.Value);
+                savedCount++;
+            }
+
+            _dirtyFiles.Clear();
+            UpdateAllTabDirtyIndicators();
+            AppendLog($"Saved {savedCount} files.", Brushes.Gray);
+            SetStatus("Saved");
+        }
+
+        private void UpdateAllTabDirtyIndicators()
+        {
+            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+            {
+                var sp = tabBorder.Child as StackPanel;
+                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                if (radio?.Tag == null) continue;
+
+                var fileName = radio.Tag.ToString()!;
+                var baseName = Path.GetFileNameWithoutExtension(fileName);
+                radio.Content = _dirtyFiles.Contains(fileName) ? $"{baseName} \u25cf" : baseName;
+            }
+        }
+
+        // ========== Build ==========
 
         private async void BuildBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -600,17 +591,7 @@ namespace ProtoTestTool
 
             try
             {
-                if (_editorMode == EditorMode.Monaco)
-                {
-                    await SaveAllMonacoFilesAsync();
-                    AppendLog($"Saved {_editors.Count} files.", Brushes.Gray);
-                }
-                else
-                {
-                    // VS Code auto-save: wait for flush
-                    await Task.Delay(300);
-                }
-
+                await SaveAllAsync();
                 AppendLog("Requesting Compilation...", Brushes.Gray);
                 OnRequestCompilation?.Invoke();
             }
@@ -625,56 +606,7 @@ namespace ProtoTestTool
             }
         }
 
-        private void StopBtn_Click(object sender, RoutedEventArgs e)
-        {
-            _debugger.Stop();
-        }
-
-        private async void DebugBtn_Click(object sender, RoutedEventArgs e)
-        {
-            string? code = null;
-
-            if (_editorMode == EditorMode.Monaco)
-            {
-                var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                    .FirstOrDefault(t => t.IsChecked == true);
-                if (activeTab?.Tag == null) return;
-
-                var fileName = activeTab.Tag.ToString()!;
-                if (!_editors.TryGetValue(fileName, out var editor)) return;
-
-                code = await GetMonacoEditorContent(editor);
-            }
-            else
-            {
-                // VS Code mode: read the active file from disk
-                var csFiles = Directory.GetFiles(_workspacePath, "*.cs");
-                if (csFiles.Length == 0)
-                {
-                    AppendLog("[Debug] No .cs files found.", Brushes.Orange);
-                    return;
-                }
-
-                // Use first file or show dialog
-                var targetFile = csFiles.FirstOrDefault(f => Path.GetFileName(f).Equals("PacketInterceptor.cs", StringComparison.OrdinalIgnoreCase))
-                    ?? csFiles[0];
-                code = await File.ReadAllTextAsync(targetFile);
-                AppendLog($"[Debug] Debugging: {Path.GetFileName(targetFile)}", Brushes.DeepSkyBlue);
-            }
-
-            if (string.IsNullOrWhiteSpace(code))
-            {
-                AppendLog("[Debug] No code to debug.", Brushes.Orange);
-                return;
-            }
-
-            DebugBtn.IsEnabled = false;
-            StopDebugBtn.IsEnabled = true;
-            DebugConsoleTab.IsChecked = true;
-            SetStatus("Debugging...");
-
-            await _debugger.ExecuteWithDebuggerAsync(code);
-        }
+        // ========== NuGet ==========
 
         private void PackagesBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -683,68 +615,261 @@ namespace ProtoTestTool
             window.ShowDialog();
         }
 
-        private async void RestartServerBtn_Click(object sender, RoutedEventArgs e)
+        // ========== Monaco Message Handler ==========
+
+        private async Task HandleMonacoMessageAsync(string json)
         {
-            _vsCodeManager.StopServer();
-            VsCodeWebView.Visibility = Visibility.Collapsed;
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
 
-            foreach (var editor in _editors.Values)
-                editor.Dispose();
-            _editors.Clear();
-            EditorsGrid.Children.Clear();
-            TabsPanel.Children.Clear();
-            MonacoFallbackGrid.Visibility = Visibility.Collapsed;
+            if (!root.TryGetProperty("type", out var typeProp)) return;
+            var type = typeProp.GetString();
+            var fileName = _activeFileName ?? "";
 
-            if (_vsCodeManager.IsVsCodeInstalled)
-                await StartVsCodeModeAsync();
-            else
-                await StartMonacoFallbackAsync();
+            switch (type)
+            {
+                case "requestCompletions":
+                    await HandleCompletionRequestAsync(root, fileName);
+                    break;
+                case "requestSignatureHelp":
+                    await HandleSignatureHelpRequestAsync(root, fileName);
+                    break;
+                case "requestDiagnostics":
+                    await HandleDiagnosticsRequestAsync(root, fileName);
+                    break;
+                case "requestHover":
+                    await HandleHoverRequestAsync(root, fileName);
+                    break;
+                case "requestDefinition":
+                    await HandleDefinitionRequestAsync(root, fileName);
+                    break;
+                case "requestReferences":
+                    await HandleReferencesRequestAsync(root, fileName);
+                    break;
+                case "requestCodeActions":
+                    await HandleCodeActionsRequestAsync(root, fileName);
+                    break;
+                case "applyCodeAction":
+                    await HandleApplyCodeActionAsync(root, fileName);
+                    break;
+                case "requestFormatting":
+                    await HandleFormattingRequestAsync(root, fileName);
+                    break;
+                case "requestRename":
+                    await HandleRenameRequestAsync(root, fileName);
+                    break;
+                case "requestSymbols":
+                    await HandleSymbolsRequestAsync(root, fileName);
+                    break;
+                case "command":
+                    HandleMonacoCommand(root);
+                    break;
+                case "contentChanged":
+                    HandleMonacoContentChanged(root);
+                    break;
+                case "cursorPosition":
+                    HandleCursorPosition(root);
+                    break;
+            }
         }
 
-        // ========== Debug Controls ==========
-
-        private void ContinueBtn_Click(object sender, RoutedEventArgs e)
+        private async Task HandleCompletionRequestAsync(JsonElement root, string fileName)
         {
-            _debugger.Continue();
-            ContinueBtn.IsEnabled = false;
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
+            var jsonResult = JsonSerializer.Serialize(completions);
+            await EditorWebView.ExecuteScriptAsync($"setCompletions({jsonResult})");
         }
 
-        private void StopDebugBtn_Click(object sender, RoutedEventArgs e)
+        private async Task HandleSignatureHelpRequestAsync(JsonElement root, string fileName)
         {
-            _debugger.Stop();
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
+            var jsonResult = signatureHelp != null ? JsonSerializer.Serialize(signatureHelp) : "null";
+            await EditorWebView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
         }
 
-        // ========== Bottom Panel ==========
-
-        private void PanelTab_Checked(object sender, RoutedEventArgs e)
+        private async Task HandleDiagnosticsRequestAsync(JsonElement root, string fileName)
         {
-            if (ScriptLogBox == null) return;
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
+            var jsonResult = JsonSerializer.Serialize(diagnostics);
+            await EditorWebView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
 
-            ScriptLogBox.Visibility = OutputTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-            DebugConsolePanel.Visibility = DebugConsoleTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            // Update status bar diagnostics count
+            Dispatcher.Invoke(() =>
+            {
+                var errors = diagnostics.Count(d => d.Severity == 8);
+                var warnings = diagnostics.Count(d => d.Severity == 4);
+                DiagnosticsText.Text = $"{errors}\u2715 {warnings}\u26A0";
+            });
+        }
+
+        private async Task HandleHoverRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var hover = await _intelliSense.GetHoverAsync(fileName, position);
+            var jsonResult = hover != null ? JsonSerializer.Serialize(hover) : "null";
+            await EditorWebView.ExecuteScriptAsync($"setHover({jsonResult})");
+        }
+
+        private async Task HandleDefinitionRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var definition = await _intelliSense.GetDefinitionAsync(fileName, position);
+            var jsonResult = definition != null ? JsonSerializer.Serialize(definition) : "null";
+            await EditorWebView.ExecuteScriptAsync($"setDefinition({jsonResult})");
+        }
+
+        private async Task HandleReferencesRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var references = await _intelliSense.GetReferencesAsync(fileName, position);
+            var jsonResult = JsonSerializer.Serialize(references);
+            await EditorWebView.ExecuteScriptAsync($"setReferences({jsonResult})");
+        }
+
+        private async Task HandleCodeActionsRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var startPos = root.GetProperty("startPosition").GetInt32();
+            var endPos = root.GetProperty("endPosition").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var actions = await _intelliSense.GetCodeActionsAsync(fileName, startPos, endPos);
+            var jsonResult = JsonSerializer.Serialize(actions);
+            await EditorWebView.ExecuteScriptAsync($"setCodeActions({jsonResult})");
+        }
+
+        private async Task HandleApplyCodeActionAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var actionIndex = root.GetProperty("actionIndex").GetInt32();
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var result = await _intelliSense.ApplyCodeActionAsync(fileName, actionIndex);
+            if (result != null)
+            {
+                var safeContent = JsonSerializer.Serialize(result.NewContent);
+                await EditorWebView.ExecuteScriptAsync($"setContent({safeContent})");
+            }
+        }
+
+        private async Task HandleFormattingRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var edits = await _intelliSense.FormatDocumentAsync(fileName);
+            var jsonResult = JsonSerializer.Serialize(edits);
+            await EditorWebView.ExecuteScriptAsync($"setFormatting({jsonResult})");
+        }
+
+        private async Task HandleRenameRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var position = root.GetProperty("position").GetInt32();
+            var newName = root.GetProperty("newName").GetString() ?? "";
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var result = await _intelliSense.RenameSymbolAsync(fileName, position, newName);
+            var jsonResult = result != null ? JsonSerializer.Serialize(result) : "{ \"edits\": [] }";
+            await EditorWebView.ExecuteScriptAsync($"setRenameEdits({jsonResult})");
+        }
+
+        private async Task HandleSymbolsRequestAsync(JsonElement root, string fileName)
+        {
+            if (_intelliSense == null) return;
+            var content = root.GetProperty("content").GetString() ?? "";
+            _intelliSense.UpdateDocument(fileName, content);
+            var symbols = await _intelliSense.GetDocumentSymbolsAsync(fileName);
+            var jsonResult = JsonSerializer.Serialize(symbols);
+            await EditorWebView.ExecuteScriptAsync($"setDocumentSymbols({jsonResult})");
+        }
+
+        private void HandleMonacoCommand(JsonElement root)
+        {
+            var command = root.GetProperty("command").GetString();
+            Dispatcher.Invoke(() =>
+            {
+                switch (command)
+                {
+                    case "save":
+                        _ = SaveAllAsync();
+                        break;
+                    case "build":
+                        BuildBtn_Click(this, new RoutedEventArgs());
+                        break;
+                }
+            });
+        }
+
+        private void HandleMonacoContentChanged(JsonElement root)
+        {
+            if (_activeFileName == null) return;
+            Dispatcher.Invoke(() => MarkDirty(_activeFileName));
+        }
+
+        private void HandleCursorPosition(JsonElement root)
+        {
+            if (root.TryGetProperty("line", out var lineProp) && root.TryGetProperty("column", out var colProp))
+            {
+                var line = lineProp.GetInt32();
+                var col = colProp.GetInt32();
+                Dispatcher.Invoke(() => CursorPositionText.Text = $"Ln {line}, Col {col}");
+            }
+        }
+
+        // ========== Dirty State ==========
+
+        private void MarkDirty(string fileName)
+        {
+            if (!_dirtyFiles.Add(fileName)) return;
+
+            // Update tab indicator
+            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+            {
+                var sp = tabBorder.Child as StackPanel;
+                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                if (radio?.Tag?.ToString() == fileName)
+                {
+                    radio.Content = Path.GetFileNameWithoutExtension(fileName) + " \u25cf";
+                    break;
+                }
+            }
         }
 
         // ========== Lifecycle ==========
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            _vsCodeManager.Dispose();
-
-            foreach (var editor in _editors.Values)
-            {
-                try { editor.Dispose(); } catch { }
-            }
-            _editors.Clear();
+            try { EditorWebView.Dispose(); } catch { }
         }
 
-        // ========== Legacy Compatibility ==========
+        // ========== Public API (Legacy Compatibility) ==========
 
         public Task UpdateCompletionsAsync(string json) => Task.CompletedTask;
 
         public async Task RefreshIntelliSenseAsync()
         {
-            if (_editorMode == EditorMode.Monaco)
-                await InitializeIntelliSenseAsync();
+            await InitializeIntelliSenseAsync();
         }
 
         // ========== Logging ==========
@@ -768,168 +893,5 @@ namespace ProtoTestTool
         {
             Dispatcher.Invoke(() => StatusText.Text = status);
         }
-
-        // ========== File Explorer ==========
-
-        public class FileItem
-        {
-            public string Name { get; set; } = "";
-            public string FullPath { get; set; } = "";
-            public string Icon { get; set; } = "/Assets/file_code.png"; // Placeholder
-            public bool IsDirectory { get; set; }
-        }
-
-        private void LoadFileStructure()
-        {
-            try
-            {
-                if (!Directory.Exists(_workspacePath)) Directory.CreateDirectory(_workspacePath);
-
-                var items = new List<FileItem>();
-                
-                // For now, flat list of specialized files, or just all files
-                var files = Directory.GetFiles(_workspacePath, "*.*");
-                foreach (var file in files)
-                {
-                    var ext = Path.GetExtension(file).ToLower();
-                    if (ext != ".cs" && ext != ".json" && ext != ".txt") continue;
-
-                    items.Add(new FileItem 
-                    { 
-                        Name = Path.GetFileName(file), 
-                        FullPath = file,
-                        Icon = ext == ".cs" ? "pack://application:,,,/Fluent;component/Assets/AlignLeftBC24.png" : "pack://application:,,,/Fluent;component/Assets/AlignLeftBC24.png" // Placeholder icons
-                    });
-                }
-
-                FileTreeView.ItemsSource = items;
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[Explorer] Error: {ex.Message}", Brushes.Red);
-            }
-        }
-
-        private void FileTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            if (FileTreeView.SelectedItem is FileItem item)
-            {
-                if (_editorMode == EditorMode.Monaco)
-                {
-                     // Check if already open
-                     // Switch tab or add
-                     // For now, simplistic: just add tab
-                     // AddMonacoTab handles duplication via key check? 
-                     // No, AddMonacoTab blindly adds. Need check.
-                     var fileName = item.Name;
-                     var exists = _editors.ContainsKey(fileName);
-                     if (exists)
-                     {
-                         // Switch to it
-                         var radio = TabsPanel.Children.OfType<RadioButton>().FirstOrDefault(r => r.Tag?.ToString() == fileName);
-                         if (radio != null) radio.IsChecked = true;
-                     }
-                     else
-                     {
-                         // Add new
-                         var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-                         _ = AddMonacoTab(fileName, new Uri(editorPath).AbsoluteUri, true);
-                     }
-                }
-                else
-                {
-                    // VS Code mode - maybe just log or try to navigate?
-                    // VS Code handles its own file explorer usually, so this might be redundant if we use internal VS Code.
-                    // But if we use external Server, we might want to control it.
-                    // For now, do nothing or send open command if supported.
-                }
-            }
-        }
-
-        private async void NewScript_Click(object sender, RoutedEventArgs e)
-        {
-            var name = $"Script_{DateTime.Now.Ticks}.cs";
-            var path = Path.Combine(_workspacePath, name);
-            // Default Template
-            await File.WriteAllTextAsync(path, "// New Script\nusing System;\n\npublic class Script \n{\n    public void Run()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}");
-            LoadFileStructure();
-        }
-
-        private async void NewInterceptor_Click(object sender, RoutedEventArgs e)
-        {
-            var name = $"Interceptor_{DateTime.Now.Ticks}.cs";
-            var path = Path.Combine(_workspacePath, name);
-            
-            // Generate Unified Interceptor Template
-            var code = ScriptTemplateFactory.GetInterceptorTemplate(); 
-            await File.WriteAllTextAsync(path, code);
-            
-            LoadFileStructure();
-        }
-
-        private void OpenInExplorer_Click(object sender, RoutedEventArgs e)
-        {
-             System.Diagnostics.Process.Start("explorer.exe", _workspacePath);
-        }
-
-        private void RenameFile_Click(object sender, RoutedEventArgs e)
-        {
-            if (FileTreeView.SelectedItem is FileItem item)
-            {
-                // Simple Input Dialog (using VisualBasic or custom)
-                // For brevity, using a customized MessageBox or just skipping implementation for now 
-                // as full InputDialog in wpf requires a Window class.
-                // Assuming user will rename in Explorer for now or I implement a helper later.
-                AppendLog("Rename not implemented yet. Use 'Open in Explorer'.", Brushes.Orange);
-            }
-        }
-
-         private void DeleteFile_Click(object sender, RoutedEventArgs e)
-        {
-            if (FileTreeView.SelectedItem is FileItem item)
-            {
-                var res = MessageBox.Show($"Delete {item.Name}?", "Confirm", MessageBoxButton.YesNo);
-                if (res == MessageBoxResult.Yes)
-                {
-                    try
-                    {
-                        File.Delete(item.FullPath);
-                        LoadFileStructure();
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendLog($"Delete failed: {ex.Message}", Brushes.Red);
-                    }
-                }
-            }
-        }
-
-    }
-
-    // ========== Enums & Data Models ==========
-
-    public enum EditorMode
-    {
-        Loading,
-        VsCode,
-        Monaco
-    }
-
-    public class SearchResultItem
-    {
-        public string FileName { get; set; } = "";
-        public int Line { get; set; }
-        public string Preview { get; set; } = "";
-        public string FullPath { get; set; } = "";
-
-        public override string ToString() => $"{FileName}:{Line}  {Preview}";
-    }
-
-    public class ProblemItem
-    {
-        public string Severity { get; set; } = "";
-        public string Message { get; set; } = "";
-        public string FileName { get; set; } = "";
-        public int Line { get; set; }
     }
 }

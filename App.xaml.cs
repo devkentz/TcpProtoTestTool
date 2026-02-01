@@ -60,7 +60,7 @@ namespace ProtoTestTool
                 mutex.Dispose();
                 return false;
             }
-
+    
             // Release previous workspace lock
             ReleaseWorkspaceLock();
             _workspaceMutex = mutex;

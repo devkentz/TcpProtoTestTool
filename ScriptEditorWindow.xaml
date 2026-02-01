@@ -11,27 +11,107 @@
         Closing="Window_Closing">
 
     <ui:FluentWindow.Resources>
-        <!-- Bottom Panel Tab Style -->
-        <Style x:Key="PanelTabStyle" TargetType="RadioButton">
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Padding" Value="10,4"/>
+        <!-- Interceptor Tab Style -->
+        <Style x:Key="InterceptorTabStyle" TargetType="RadioButton">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,6"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#808080"/>
             <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="TabBorder" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" BorderThickness="0,0,0,2" BorderBrush="Transparent">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter Property="Foreground" Value="#E7E7E7"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#007ACC"/>
+                                <Setter TargetName="TabBorder" Property="Background" Value="#1E1E1E"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Foreground" Value="#E7E7E7"/>
-                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter TargetName="TabBorder" Property="Background" Value="#2D2D30"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Sidebar Item Button Style -->
+        <Style x:Key="SidebarItemStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#2A2D2E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Sidebar Delete Button Style -->
+        <Style x:Key="DeleteBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Visibility" Value="Hidden"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3F3F46"/>
+                                <Setter Property="Foreground" Value="#E7E7E7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Tab Close Button Style -->
+        <Style x:Key="TabCloseBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Padding" Value="3,1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3F3F46"/>
+                                <Setter Property="Foreground" Value="#E7E7E7"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -60,13 +140,10 @@
                     <TextBlock Grid.Column="0" Text="Script Editor" VerticalAlignment="Center" Margin="15,0,15,0" FontWeight="SemiBold" FontSize="12"/>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
-                        <ui:Button x:Name="BuildBtn" Content="Build &amp; Run" Icon="Play24" Appearance="Primary" Click="BuildBtn_Click" Margin="0,0,4,0" ToolTip="Ctrl+B"/>
-                        <ui:Button x:Name="StopBtn" Content="Stop" Icon="Stop24" Appearance="Danger" Click="StopBtn_Click" Margin="0,0,4,0" IsEnabled="False" Visibility="Collapsed"/>
-                        <ui:Button x:Name="DebugBtn" Content="Debug" Icon="Bug24" Appearance="Secondary" Click="DebugBtn_Click" Margin="0,0,4,0"/>
+                        <ui:Button x:Name="SaveBtn" Content="Save" Icon="Save24" Appearance="Secondary" Click="SaveBtn_Click" Margin="0,0,4,0" ToolTip="Ctrl+S"/>
+                        <ui:Button x:Name="BuildBtn" Content="Build" Icon="Play24" Appearance="Primary" Click="BuildBtn_Click" Margin="0,0,4,0" ToolTip="Ctrl+B"/>
                         <Rectangle Width="1" Height="16" Fill="#3F3F46" Margin="4,0,8,0"/>
                         <ui:Button x:Name="PackagesBtn" Content="NuGet" Icon="AppGeneric24" Appearance="Secondary" Click="PackagesBtn_Click"/>
-                        <Rectangle Width="1" Height="16" Fill="#3F3F46" Margin="8,0,8,0"/>
-                        <ui:Button x:Name="RestartServerBtn" Content="Restart Server" Icon="ArrowClockwise24" Appearance="Transparent" Click="RestartServerBtn_Click" FontSize="11" Visibility="Collapsed"/>
                     </StackPanel>
                 </Grid>
             </ui:TitleBar.Header>
@@ -75,147 +152,134 @@
         <!-- 1. Main Content -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" MinWidth="150"/> <!-- Sidebar -->
-                <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="*"/>                  <!-- Editor Area -->
+                <ColumnDefinition Width="220" MinWidth="150"/>  <!-- Sidebar -->
+                <ColumnDefinition Width="5"/>                    <!-- Splitter -->
+                <ColumnDefinition Width="*"/>                    <!-- Editor Area -->
             </Grid.ColumnDefinitions>
 
             <!-- Sidebar -->
             <Border Grid.Column="0" Background="#252526" BorderBrush="#3F3F46" BorderThickness="0,0,1,0">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    
-                    <StackPanel Orientation="Horizontal" Margin="10,8,10,8">
-                         <TextBlock Text="EXPLORER" Foreground="#808080" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <ui:Button Icon="Add20" Appearance="Transparent" Margin="10,0,0,0" ToolTip="New Script" Click="NewScript_Click" Padding="2"/>
-                    </StackPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <!-- CORE SCRIPTS Section -->
+                        <TextBlock Text="CORE SCRIPTS" Foreground="#808080" FontSize="11" FontWeight="Bold" Margin="12,10,10,4"/>
+                        <StackPanel x:Name="CoreScriptsPanel">
+                            <Button x:Name="CoreCodecBtn" Tag="PacketCodec.cs" Click="CoreScript_Click" Style="{StaticResource SidebarItemStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PacketCodec"/>
+                                    <TextBlock Text="  IPacketCodec" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="CoreHeaderBtn" Tag="PacketHeader.cs" Click="CoreScript_Click" Style="{StaticResource SidebarItemStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PacketHeader"/>
+                                    <TextBlock Text="  IHeader" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="CoreLoaderBtn" Tag="PacketLoader.cs" Click="CoreScript_Click" Style="{StaticResource SidebarItemStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PacketLoader"/>
+                                    <TextBlock Text="  IPacketLoader" Foreground="#569CD6" FontSize="10" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
 
-                    <TreeView x:Name="FileTreeView" Grid.Row="1" Background="Transparent" BorderThickness="0" 
-                              Foreground="#CCCCCC" Padding="0,5" MouseDoubleClick="FileTreeView_MouseDoubleClick">
-                        <TreeView.ItemContainerStyle>
-                            <Style TargetType="{x:Type TreeViewItem}">
-                                <Setter Property="IsExpanded" Value="True"/>
-                                <Setter Property="Foreground" Value="#CCCCCC"/>
-                                <Setter Property="Padding" Value="5,2"/>
-                                <Style.Triggers>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter Property="Background" Value="#37373D"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TreeView.ItemContainerStyle>
-                        <TreeView.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="New Script..." Click="NewScript_Click"/>
-                                <MenuItem Header="New Interceptor..." Click="NewInterceptor_Click"/>
-                                <Separator/>
-                                <MenuItem Header="Open in Explorer" Click="OpenInExplorer_Click"/>
-                                <Separator/>
-                                <MenuItem Header="Rename" Click="RenameFile_Click"/>
-                                <MenuItem Header="Delete" Click="DeleteFile_Click"/>
-                            </ContextMenu>
-                        </TreeView.ContextMenu>
-                    </TreeView>
-                </Grid>
+                        <!-- Separator -->
+                        <Rectangle Height="1" Fill="#3F3F46" Margin="10,8"/>
+
+                        <!-- INTERCEPTORS Section -->
+                        <Grid Margin="12,4,10,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="INTERCEPTORS" Foreground="#808080" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <Button x:Name="AddInterceptorBtn" Grid.Column="1" Content="+" FontSize="14" FontWeight="Bold"
+                                    Background="Transparent" Foreground="#808080" BorderThickness="0" Padding="6,0"
+                                    Cursor="Hand" ToolTip="Add Interceptor" Click="AddInterceptor_Click">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="AddInterceptorMenu">
+                                        <MenuItem Header="Proxy Interceptor" Tag="Proxy" Click="AddInterceptorType_Click"/>
+                                        <MenuItem Header="Client Interceptor" Tag="Client" Click="AddInterceptorType_Click"/>
+                                        <MenuItem Header="Replay Interceptor" Tag="Replay" Click="AddInterceptorType_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </Grid>
+                        <StackPanel x:Name="InterceptorListPanel"/>
+
+                        <!-- Separator -->
+                        <Rectangle Height="1" Fill="#3F3F46" Margin="10,8"/>
+
+                        <!-- LIBS Section (Expander) -->
+                        <Expander x:Name="LibsExpander" IsExpanded="False" Margin="4,0">
+                            <Expander.Header>
+                                <TextBlock x:Name="LibsHeaderText" Text="LIBS (0)" Foreground="#808080" FontSize="11" FontWeight="Bold"/>
+                            </Expander.Header>
+                            <StackPanel x:Name="LibsListPanel" Margin="8,2,0,0"/>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
 
             <!-- Vertical Splitter -->
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#2D2D2D" ShowsPreview="True"/>
 
-            <!-- Right Side: Editor + Panel -->
+            <!-- Right Side: Tabs + Editor + Output -->
             <Grid Grid.Column="2">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>      <!-- Editor Area -->
+                    <RowDefinition Height="Auto"/>   <!-- Interceptor Tab Strip -->
+                    <RowDefinition Height="*"/>      <!-- Monaco WebView2 -->
                     <RowDefinition Height="5"/>      <!-- Splitter -->
-                    <RowDefinition Height="Auto"/>   <!-- Panel Header -->
-                    <RowDefinition Height="150"/>    <!-- Panel Content -->
+                    <RowDefinition Height="150"/>    <!-- Output -->
                 </Grid.RowDefinitions>
-    
-                <!-- VS Code WebView2 / Fallback Editor -->
-                <Grid Grid.Row="0">
+
+                <!-- Interceptor Tab Strip -->
+                <Border Grid.Row="0" x:Name="TabStripBorder" BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Background="#252526">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Background="Transparent"/>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- Single Monaco WebView2 -->
+                <Grid Grid.Row="1">
                     <!-- Loading Overlay -->
                     <Border x:Name="LoadingOverlay" Background="#1E1E1E" Panel.ZIndex="10">
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                             <ui:ProgressRing IsIndeterminate="True" Width="40" Height="40" Margin="0,0,0,12"/>
-                            <TextBlock x:Name="LoadingText" Text="Starting VS Code Server..." Foreground="#CCCCCC" FontSize="14" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="LoadingSubText" Text="" Foreground="#808080" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                            <TextBlock x:Name="LoadingText" Text="Initializing Editor..." Foreground="#CCCCCC" FontSize="14" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Border>
-    
-                    <!-- VS Code WebView2 -->
-                    <wv2:WebView2 x:Name="VsCodeWebView" Visibility="Collapsed"/>
-    
-                    <!-- Fallback: Monaco Editors (shown when VS Code not available) -->
-                    <Grid x:Name="MonacoFallbackGrid" Visibility="Collapsed">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-    
-                        <!-- Tab Strip (Fallback only) -->
-                        <Border Grid.Row="0" BorderBrush="#3F3F46" BorderThickness="0,0,0,1">
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Background="Transparent"/>
-                            </ScrollViewer>
-                        </Border>
-    
-                        <!-- Editor Content (Fallback only) -->
-                        <Grid Grid.Row="1" x:Name="EditorsGrid"/>
-                    </Grid>
+
+                    <wv2:WebView2 x:Name="EditorWebView" Visibility="Collapsed"/>
                 </Grid>
-    
+
                 <!-- Splitter -->
-                <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="#2D2D2D" ShowsPreview="True"/>
-    
-                <!-- Panel Header -->
-                <Border Grid.Row="2" Background="#252526" BorderBrush="#3F3F46" BorderThickness="0,1,0,0" Padding="10,4">
-                    <StackPanel Orientation="Horizontal">
-                        <RadioButton x:Name="OutputTab" Content="OUTPUT" IsChecked="True" Checked="PanelTab_Checked" Style="{StaticResource PanelTabStyle}" Margin="0,0,12,0"/>
-                        <RadioButton x:Name="DebugConsoleTab" Content="DEBUG CONSOLE" Checked="PanelTab_Checked" Style="{StaticResource PanelTabStyle}"/>
-                    </StackPanel>
-                </Border>
-    
-                <!-- Panel Content -->
+                <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="#2D2D2D" ShowsPreview="True"/>
+
+                <!-- Output Panel -->
                 <Grid Grid.Row="3">
-                    <!-- Output -->
-                    <RichTextBox x:Name="ScriptLogBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#252526" BorderBrush="#3F3F46" BorderThickness="0,1,0,0" Padding="10,4">
+                        <TextBlock Text="OUTPUT" Foreground="#808080" FontSize="11" FontWeight="SemiBold"/>
+                    </Border>
+
+                    <RichTextBox x:Name="ScriptLogBox" Grid.Row="1" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
                                  Background="#1E1E1E" Foreground="#CCCCCC" FontFamily="Consolas" FontSize="12"
-                                 BorderThickness="0" Margin="4" Visibility="Visible">
+                                 BorderThickness="0" Margin="4">
                         <RichTextBox.Resources>
                             <Style TargetType="{x:Type Paragraph}">
                                 <Setter Property="Margin" Value="0"/>
                             </Style>
                         </RichTextBox.Resources>
                     </RichTextBox>
-    
-                    <!-- Debug Console -->
-                    <Grid x:Name="DebugConsolePanel" Visibility="Collapsed">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-    
-                        <ListView Grid.Row="0" x:Name="VariablesListView" Background="#1E1E1E" BorderThickness="0"
-                                  Foreground="#CCCCCC" FontFamily="Consolas" FontSize="12">
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="Name" Width="150" DisplayMemberBinding="{Binding Name}"/>
-                                    <GridViewColumn Header="Value" Width="250" DisplayMemberBinding="{Binding Value}"/>
-                                    <GridViewColumn Header="Type" Width="150" DisplayMemberBinding="{Binding Type}"/>
-                                </GridView>
-                            </ListView.View>
-                        </ListView>
-    
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="4">
-                            <Button x:Name="ContinueBtn" Content="&#xE768;" FontFamily="Segoe MDL2 Assets"
-                                    Click="ContinueBtn_Click" ToolTip="Continue (F5)" Padding="8,4" Margin="0,0,4,0" IsEnabled="False"/>
-                            <Button x:Name="StopDebugBtn" Content="&#xE71A;" FontFamily="Segoe MDL2 Assets"
-                                    Click="StopDebugBtn_Click" ToolTip="Stop" Padding="8,4" IsEnabled="False"/>
-                        </StackPanel>
-                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
@@ -224,14 +288,14 @@
         <Border Grid.Row="2" Background="#007ACC" Height="22">
             <Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="10,0">
-                    <Ellipse x:Name="ServerStatusDot" Width="8" Height="8" Fill="#4EC9B0" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="ServerStatusText" Text="Starting..." Foreground="White" FontSize="11" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="StatusText" Text="" Foreground="White" FontSize="11" Margin="15,0,0,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="StatusText" Text="Ready" Foreground="White" FontSize="11" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,10,0">
-                    <TextBlock x:Name="EditorModeText" Text="" Foreground="White" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0"/>
-                    <TextBlock x:Name="PortText" Text="" Foreground="White" FontSize="11" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="CursorPositionText" Text="" Foreground="White" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                    <TextBlock Text="UTF-8" Foreground="White" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                    <TextBlock Text="C#" Foreground="White" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                    <TextBlock x:Name="DiagnosticsText" Text="0&#x2715; 0&#x26A0;" Foreground="White" FontSize="11" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
