@@ -1,14 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
@@ -21,13 +18,15 @@ namespace ProtoTestTool
         private readonly string _workspacePath;
         private readonly string _workspaceRoot;
         private readonly ScriptLoader _scriptLoader;
+        private readonly ScriptDebugger _debugger = new();
+        private readonly VsCodeServerManager _vsCodeManager = new();
+
+        private EditorMode _editorMode = EditorMode.Loading;
+
+        // Fallback: Monaco editor state
         private readonly Dictionary<string, Microsoft.Web.WebView2.Wpf.WebView2> _editors = new();
         private readonly HashSet<string> _dirtyFiles = new();
-        private readonly Dictionary<string, List<DiagnosticDto>> _allDiagnostics = new();
         private RoslynIntelliSenseService? _intelliSense;
-        private FileSystemWatcher? _fileWatcher;
-        private readonly ScriptDebugger _debugger = new();
-        private readonly Dictionary<string, HashSet<int>> _fileBreakpoints = new();
 
         public event Action? OnRequestCompilation;
 
@@ -44,61 +43,110 @@ namespace ProtoTestTool
 
         private async void ScriptEditorWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            await InitializeIntelliSenseAsync();
-            await InitializeEditorsAsync();
-            InitializeFileExplorer();
+            if (_vsCodeManager.IsVsCodeInstalled)
+            {
+                await StartVsCodeModeAsync();
+            }
+            else
+            {
+                await StartMonacoFallbackAsync();
+            }
         }
 
-        private void InitializeDebugger()
+        // ========== VS Code Server Mode ==========
+
+        private async Task StartVsCodeModeAsync()
         {
-            _debugger.BreakpointHit += (line, vars) =>
+            _editorMode = EditorMode.Loading;
+            LoadingOverlay.Visibility = Visibility.Visible;
+            LoadingText.Text = "Starting VS Code Server...";
+
+            try
             {
-                Dispatcher.Invoke(async () =>
+                // Ensure workspace setup (.csproj, .vscode settings)
+                VsCodeWorkspaceSetup.EnsureWorkspaceSetup(_workspaceRoot);
+                LoadingSubText.Text = "Workspace configured";
+
+                _vsCodeManager.OutputReceived += msg =>
+                    Dispatcher.Invoke(() => AppendLog($"[Server] {msg}", Brushes.Gray));
+
+                _vsCodeManager.ServerStopped += () =>
+                    Dispatcher.Invoke(() =>
+                    {
+                        ServerStatusDot.Fill = Brushes.Red;
+                        ServerStatusText.Text = "Server Stopped";
+                        RestartServerBtn.Visibility = Visibility.Visible;
+                    });
+
+                LoadingText.Text = "Launching VS Code Server...";
+                LoadingSubText.Text = "This may take a moment on first launch";
+
+                var port = await _vsCodeManager.StartServerAsync(_workspacePath);
+
+                _editorMode = EditorMode.VsCode;
+                LoadingText.Text = "Loading VS Code...";
+                LoadingSubText.Text = $"Port {port}";
+
+                // Navigate WebView2 to VS Code
+                var env = await CoreWebView2Environment.CreateAsync();
+                await VsCodeWebView.EnsureCoreWebView2Async(env);
+                VsCodeWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
+                VsCodeWebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
+                VsCodeWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+
+                var folderPath = _workspacePath.Replace("\\", "/");
+                var url = $"http://127.0.0.1:{port}/?folder={folderPath}";
+                VsCodeWebView.Source = new Uri(url);
+
+                // Wait for VS Code to finish loading
+                VsCodeWebView.NavigationCompleted += (s, args) =>
                 {
-                    var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                        .FirstOrDefault(t => t.IsChecked == true);
-                    if (activeTab?.Tag != null && _editors.TryGetValue(activeTab.Tag.ToString()!, out var editor))
-                        await editor.ExecuteScriptAsync($"highlightDebugLine({line})");
+                    Dispatcher.Invoke(() =>
+                    {
+                        LoadingOverlay.Visibility = Visibility.Collapsed;
+                        VsCodeWebView.Visibility = Visibility.Visible;
 
-                    VariablesListView.ItemsSource = vars;
-                    DebugConsoleTab.IsChecked = true;
-                    ContinueBtn.IsEnabled = true;
-                    StepOverBtn.IsEnabled = true;
-                    StopDebugBtn.IsEnabled = true;
-                    AppendLog($"Breakpoint hit at line {line}", Brushes.Yellow);
-                });
-            };
+                        ServerStatusDot.Fill = new SolidColorBrush(Color.FromRgb(78, 201, 176));
+                        ServerStatusText.Text = "VS Code Server";
+                        EditorModeText.Text = "VS Code";
+                        PortText.Text = $"Port {port}";
+                        RestartServerBtn.Visibility = Visibility.Visible;
+                    });
+                };
 
-            _debugger.OutputReceived += (output) =>
+                AppendLog($"VS Code Server started on port {port}", Brushes.LimeGreen);
+            }
+            catch (Exception ex)
             {
-                Dispatcher.Invoke(() => AppendLog(output.TrimEnd(), Brushes.LightGray));
-            };
-
-            _debugger.ErrorOccurred += (error) =>
-            {
-                Dispatcher.Invoke(() => AppendLog($"[Error] {error}", Brushes.Red));
-            };
-
-            _debugger.ExecutionCompleted += () =>
-            {
-                Dispatcher.Invoke(async () =>
-                {
-                    var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                        .FirstOrDefault(t => t.IsChecked == true);
-                    if (activeTab?.Tag != null && _editors.TryGetValue(activeTab.Tag.ToString()!, out var editor))
-                        await editor.ExecuteScriptAsync("clearDebugHighlight()");
-
-                    ContinueBtn.IsEnabled = false;
-                    StepOverBtn.IsEnabled = false;
-                    StopDebugBtn.IsEnabled = false;
-                    DebugBtn.IsEnabled = true;
-                    SetStatus("Ready");
-                    AppendLog("Debug session ended.", Brushes.Gray);
-                });
-            };
+                AppendLog($"VS Code Server failed: {ex.Message}", Brushes.Red);
+                AppendLog("Falling back to built-in Monaco editor...", Brushes.Orange);
+                await StartMonacoFallbackAsync();
+            }
         }
 
-        // ========== IntelliSense ==========
+        // ========== Monaco Fallback Mode ==========
+
+        private async Task StartMonacoFallbackAsync()
+        {
+            _editorMode = EditorMode.Monaco;
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+            VsCodeWebView.Visibility = Visibility.Collapsed;
+            MonacoFallbackGrid.Visibility = Visibility.Visible;
+
+            ServerStatusDot.Fill = Brushes.Orange;
+            ServerStatusText.Text = "Built-in Editor";
+            EditorModeText.Text = "Monaco (Fallback)";
+            PortText.Text = "";
+
+            if (!_vsCodeManager.IsVsCodeInstalled)
+            {
+                AppendLog("VS Code not found. Using built-in Monaco editor.", Brushes.Orange);
+                AppendLog("Install VS Code for full IDE experience: https://code.visualstudio.com", Brushes.Gray);
+            }
+
+            await InitializeIntelliSenseAsync();
+            await InitializeMonacoEditorsAsync();
+        }
 
         private async Task InitializeIntelliSenseAsync()
         {
@@ -120,16 +168,8 @@ namespace ProtoTestTool
             }
         }
 
-        public async Task RefreshIntelliSenseAsync()
+        private async Task InitializeMonacoEditorsAsync()
         {
-            await InitializeIntelliSenseAsync();
-        }
-
-        // ========== Editor Initialization ==========
-
-        private async Task InitializeEditorsAsync()
-        {
-            // Clear dynamic tabs and editors
             TabsPanel.Children.Clear();
             foreach (var editor in _editors.Values)
                 editor.Dispose();
@@ -141,7 +181,7 @@ namespace ProtoTestTool
             var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
             if (!File.Exists(editorPath))
             {
-                MessageBox.Show($"Editor host not found at: {editorPath}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppendLog($"Editor host not found: {editorPath}", Brushes.Red);
                 return;
             }
             var editorUrl = new Uri(editorPath).AbsoluteUri;
@@ -154,14 +194,12 @@ namespace ProtoTestTool
             foreach (var file in files)
             {
                 var fileName = Path.GetFileName(file);
-                await AddEditorTab(fileName, editorUrl, isFirst);
+                await AddMonacoTab(fileName, editorUrl, isFirst);
                 isFirst = false;
             }
-
-            SetStatus("Ready");
         }
 
-        private async Task AddEditorTab(string fileName, string editorUrl, bool isSelected = false)
+        private async Task AddMonacoTab(string fileName, string editorUrl, bool isSelected = false)
         {
             var webView = new Microsoft.Web.WebView2.Wpf.WebView2
             {
@@ -174,17 +212,11 @@ namespace ProtoTestTool
             {
                 Content = Path.GetFileNameWithoutExtension(fileName),
                 Tag = fileName,
-                Style = (Style)FindResource("EditorTabStyle"),
                 IsChecked = isSelected
             };
-            radio.Checked += Tab_Checked;
+            radio.Checked += MonacoTab_Checked;
             TabsPanel.Children.Add(radio);
 
-            await InitializeWebView(webView, editorUrl, fileName);
-        }
-
-        private async Task InitializeWebView(Microsoft.Web.WebView2.Wpf.WebView2 webView, string url, string fileName)
-        {
             try
             {
                 var tcs = new TaskCompletionSource<bool>();
@@ -193,7 +225,7 @@ namespace ProtoTestTool
                 {
                     try
                     {
-                        await HandleWebMessageAsync(webView, e.WebMessageAsJson, fileName);
+                        await HandleMonacoMessageAsync(webView, e.WebMessageAsJson, fileName);
                         if (e.WebMessageAsJson.Contains("\"type\":\"ready\""))
                             tcs.TrySetResult(true);
                     }
@@ -203,18 +235,10 @@ namespace ProtoTestTool
                     }
                 };
 
-                webView.Source = new Uri(url);
+                webView.Source = new Uri(editorUrl);
 
                 var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(5000));
-                if (completedTask == tcs.Task)
-                {
-                    await LoadFileIntoEditor(webView, fileName);
-                }
-                else
-                {
-                    AppendLog($"[Editor] Timeout for: {fileName}", Brushes.Orange);
-                    await LoadFileIntoEditor(webView, fileName);
-                }
+                await LoadFileIntoMonaco(webView, fileName);
             }
             catch (Exception ex)
             {
@@ -222,7 +246,7 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task LoadFileIntoEditor(Microsoft.Web.WebView2.Wpf.WebView2 webView, string fileName)
+        private async Task LoadFileIntoMonaco(Microsoft.Web.WebView2.Wpf.WebView2 webView, string fileName)
         {
             var safeFileName = JsonSerializer.Serialize(fileName);
             await webView.ExecuteScriptAsync($"setFileName({safeFileName})");
@@ -237,9 +261,21 @@ namespace ProtoTestTool
             }
         }
 
-        // ========== Message Handler ==========
+        private void MonacoTab_Checked(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton button || button.Tag == null) return;
+            string fileName = button.Tag.ToString()!;
 
-        private async Task HandleWebMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
+            foreach (var kvp in _editors)
+            {
+                kvp.Value.Visibility = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Hidden;
+            }
+        }
+
+        // ========== Monaco Message Handler (Fallback) ==========
+
+        private async Task HandleMonacoMessageAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, string json, string fileName)
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -283,24 +319,16 @@ namespace ProtoTestTool
                     await HandleSymbolsRequestAsync(webView, root, fileName);
                     break;
                 case "command":
-                    HandleCommand(root);
-                    break;
-                case "cursorPosition":
-                    HandleCursorPosition(root);
+                    HandleMonacoCommand(root);
                     break;
                 case "contentChanged":
-                    HandleContentChanged(root);
-                    break;
-                case "navigateToFile":
-                    await HandleNavigateToFile(root);
+                    HandleMonacoContentChanged(root);
                     break;
                 case "breakpoint":
-                    HandleBreakpointToggle(root);
+                    HandleMonacoBreakpoint(root);
                     break;
             }
         }
-
-        // ========== Roslyn Request Handlers ==========
 
         private async Task HandleCompletionRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
         {
@@ -330,10 +358,8 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
-            _allDiagnostics[fileName] = diagnostics;
             var jsonResult = JsonSerializer.Serialize(diagnostics);
             await webView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
-            Dispatcher.Invoke(UpdateProblemsPanel);
         }
 
         private async Task HandleHoverRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
@@ -415,20 +441,6 @@ namespace ProtoTestTool
             var result = await _intelliSense.RenameSymbolAsync(fileName, position, newName);
             var jsonResult = result != null ? JsonSerializer.Serialize(result) : "{ \"edits\": [] }";
             await webView.ExecuteScriptAsync($"setRenameEdits({jsonResult})");
-
-            // Apply cross-file edits
-            if (result != null)
-            {
-                foreach (var fileEdit in result.Edits.Where(e => e.FileName != fileName))
-                {
-                    if (_editors.TryGetValue(fileEdit.FileName, out var otherEditor))
-                    {
-                        var editsJson = JsonSerializer.Serialize(fileEdit.TextEdits);
-                        await otherEditor.ExecuteScriptAsync($"applyEdits({editsJson})");
-                        MarkDirty(fileEdit.FileName);
-                    }
-                }
-            }
         }
 
         private async Task HandleSymbolsRequestAsync(Microsoft.Web.WebView2.Wpf.WebView2 webView, JsonElement root, string fileName)
@@ -441,9 +453,7 @@ namespace ProtoTestTool
             await webView.ExecuteScriptAsync($"setDocumentSymbols({jsonResult})");
         }
 
-        // ========== Command / UI Handlers ==========
-
-        private void HandleCommand(JsonElement root)
+        private void HandleMonacoCommand(JsonElement root)
         {
             var command = root.GetProperty("command").GetString();
             Dispatcher.Invoke(() =>
@@ -451,143 +461,37 @@ namespace ProtoTestTool
                 switch (command)
                 {
                     case "save":
-                        _ = SaveCurrentFileAsync();
-                        break;
-                    case "saveAll":
-                        _ = SaveAllFilesAsync();
+                        _ = SaveCurrentMonacoFileAsync();
                         break;
                     case "build":
                         BuildBtn_Click(this, new RoutedEventArgs());
-                        break;
-                    case "searchFiles":
-                        SearchToggle.IsChecked = true;
-                        SearchTextBox.Focus();
-                        break;
-                    case "closeTab":
-                        CloseCurrentTab();
                         break;
                 }
             });
         }
 
-        private void HandleCursorPosition(JsonElement root)
-        {
-            var line = root.GetProperty("line").GetInt32();
-            var column = root.GetProperty("column").GetInt32();
-            Dispatcher.Invoke(() => CursorPositionText.Text = $"Ln {line}, Col {column}");
-        }
-
-        private void HandleContentChanged(JsonElement root)
+        private void HandleMonacoContentChanged(JsonElement root)
         {
             if (root.TryGetProperty("fileName", out var fn))
             {
                 var fileName = fn.GetString();
                 if (!string.IsNullOrEmpty(fileName))
-                    Dispatcher.Invoke(() => MarkDirty(fileName));
+                    Dispatcher.Invoke(() => MarkMonacoDirty(fileName));
             }
         }
 
-        private async Task HandleNavigateToFile(JsonElement root)
-        {
-            var fileName = root.GetProperty("fileName").GetString() ?? "";
-            var line = root.GetProperty("line").GetInt32();
-            var column = root.GetProperty("column").GetInt32();
-
-            await Dispatcher.InvokeAsync(async () =>
-            {
-                await OpenFileAndNavigate(fileName, line, column);
-            });
-        }
-
-        private void HandleBreakpointToggle(JsonElement root)
+        private void HandleMonacoBreakpoint(JsonElement root)
         {
             var line = root.GetProperty("line").GetInt32();
             var enabled = root.GetProperty("enabled").GetBoolean();
 
-            // Track per-file breakpoints
-            var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.IsChecked == true);
-            if (activeTab?.Tag == null) return;
-            var fileName = activeTab.Tag.ToString()!;
-
-            if (!_fileBreakpoints.TryGetValue(fileName, out var bps))
-            {
-                bps = [];
-                _fileBreakpoints[fileName] = bps;
-            }
-
             if (enabled)
-            {
-                bps.Add(line);
                 _debugger.AddBreakpoint(line);
-            }
             else
-            {
-                bps.Remove(line);
                 _debugger.RemoveBreakpoint(line);
-            }
         }
 
-        // ========== Tab Management ==========
-
-        private void Tab_Checked(object sender, RoutedEventArgs e)
-        {
-            if (sender is not RadioButton button || button.Tag == null) return;
-            string fileName = button.Tag.ToString()!;
-
-            foreach (var kvp in _editors)
-            {
-                kvp.Value.Visibility = kvp.Key.Equals(fileName, StringComparison.OrdinalIgnoreCase)
-                    ? Visibility.Visible : Visibility.Hidden;
-            }
-        }
-
-        private void CloseTab_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button btn || btn.Tag == null) return;
-            var fileName = btn.Tag.ToString()!;
-            CloseTab(fileName);
-        }
-
-        private void CloseTab(string fileName)
-        {
-            if (_dirtyFiles.Contains(fileName))
-            {
-                var result = MessageBox.Show(
-                    $"'{fileName}' has unsaved changes. Save before closing?",
-                    "Unsaved Changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
-
-                if (result == MessageBoxResult.Cancel) return;
-                if (result == MessageBoxResult.Yes) _ = SaveFileAsync(fileName);
-            }
-
-            if (_editors.TryGetValue(fileName, out var editor))
-            {
-                editor.Dispose();
-                EditorsGrid.Children.Remove(editor);
-                _editors.Remove(fileName);
-            }
-
-            var tab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
-            if (tab != null) TabsPanel.Children.Remove(tab);
-
-            _dirtyFiles.Remove(fileName);
-
-            // Select next tab
-            var firstTab = TabsPanel.Children.OfType<RadioButton>().FirstOrDefault();
-            if (firstTab != null) firstTab.IsChecked = true;
-        }
-
-        private void CloseCurrentTab()
-        {
-            var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.IsChecked == true);
-            if (activeTab?.Tag != null)
-                CloseTab(activeTab.Tag.ToString()!);
-        }
-
-        private void MarkDirty(string fileName)
+        private void MarkMonacoDirty(string fileName)
         {
             if (_dirtyFiles.Add(fileName))
             {
@@ -598,7 +502,7 @@ namespace ProtoTestTool
             }
         }
 
-        private void MarkClean(string fileName)
+        private void MarkMonacoClean(string fileName)
         {
             _dirtyFiles.Remove(fileName);
             var tab = TabsPanel.Children.OfType<RadioButton>()
@@ -607,31 +511,9 @@ namespace ProtoTestTool
                 tab.Content = Path.GetFileNameWithoutExtension(fileName);
         }
 
-        private async Task OpenFileAndNavigate(string fileName, int line, int column)
-        {
-            if (!_editors.ContainsKey(fileName))
-            {
-                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-                var editorUrl = new Uri(editorPath).AbsoluteUri;
-                await AddEditorTab(fileName, editorUrl);
-            }
+        // ========== Monaco File Operations ==========
 
-            // Select tab
-            var tab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.Tag?.ToString() == fileName);
-            if (tab != null) tab.IsChecked = true;
-
-            // Navigate to position
-            if (_editors.TryGetValue(fileName, out var editor))
-            {
-                await Task.Delay(100); // Wait for tab switch
-                await editor.ExecuteScriptAsync($"revealPosition({line}, {column})");
-            }
-        }
-
-        // ========== File Operations ==========
-
-        private async Task<string> GetEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
+        private async Task<string> GetMonacoEditorContent(Microsoft.Web.WebView2.Wpf.WebView2 webView)
         {
             try
             {
@@ -644,283 +526,71 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task SaveCurrentFileAsync()
+        private async Task SaveCurrentMonacoFileAsync()
         {
             var activeTab = TabsPanel.Children.OfType<RadioButton>()
                 .FirstOrDefault(t => t.IsChecked == true);
-            if (activeTab?.Tag != null)
-                await SaveFileAsync(activeTab.Tag.ToString()!);
-        }
+            if (activeTab?.Tag == null) return;
+            var fileName = activeTab.Tag.ToString()!;
 
-        private async Task SaveFileAsync(string fileName)
-        {
             if (!_editors.TryGetValue(fileName, out var editor)) return;
-
-            var code = await GetEditorContent(editor);
+            var code = await GetMonacoEditorContent(editor);
             if (string.IsNullOrWhiteSpace(code)) return;
 
             var path = Path.Combine(_workspacePath, fileName);
             await File.WriteAllTextAsync(path, code);
-            MarkClean(fileName);
+            MarkMonacoClean(fileName);
         }
 
-        private async Task SaveAllFilesAsync()
+        private async Task SaveAllMonacoFilesAsync()
         {
             foreach (var kvp in _editors)
             {
-                var code = await GetEditorContent(kvp.Value);
+                var code = await GetMonacoEditorContent(kvp.Value);
                 if (string.IsNullOrWhiteSpace(code)) continue;
 
                 var path = Path.Combine(_workspacePath, kvp.Key);
                 await File.WriteAllTextAsync(path, code);
-                MarkClean(kvp.Key);
+                MarkMonacoClean(kvp.Key);
             }
-
-            AppendLog($"Saved {_editors.Count} files.", Brushes.Gray);
         }
 
-        // ========== File Explorer ==========
+        // ========== Debugger ==========
 
-        private void InitializeFileExplorer()
+        private void InitializeDebugger()
         {
-            RefreshFileTree();
-
-            if (Directory.Exists(_workspacePath))
+            _debugger.BreakpointHit += (line, vars) =>
             {
-                _fileWatcher = new FileSystemWatcher(_workspacePath, "*.cs")
+                Dispatcher.Invoke(() =>
                 {
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
-                    EnableRaisingEvents = true
-                };
-                _fileWatcher.Created += (s, e) => Dispatcher.Invoke(RefreshFileTree);
-                _fileWatcher.Deleted += (s, e) => Dispatcher.Invoke(RefreshFileTree);
-                _fileWatcher.Renamed += (s, e) => Dispatcher.Invoke(RefreshFileTree);
-            }
-        }
-
-        private void RefreshFileTree()
-        {
-            FileTreeView.Items.Clear();
-
-            if (!Directory.Exists(_workspacePath)) return;
-
-            var scriptsItem = new TreeViewItem
-            {
-                Header = "Scripts",
-                IsExpanded = true,
-                Foreground = Brushes.LightGray
+                    VariablesListView.ItemsSource = vars;
+                    DebugConsoleTab.IsChecked = true;
+                    ContinueBtn.IsEnabled = true;
+                    StopDebugBtn.IsEnabled = true;
+                    AppendLog($"Breakpoint hit at line {line}", Brushes.Yellow);
+                });
             };
 
-            foreach (var file in Directory.GetFiles(_workspacePath, "*.cs").OrderBy(f => f))
+            _debugger.OutputReceived += output =>
+                Dispatcher.Invoke(() => AppendLog(output.TrimEnd(), Brushes.LightGray));
+
+            _debugger.ErrorOccurred += error =>
+                Dispatcher.Invoke(() => AppendLog($"[Error] {error}", Brushes.Red));
+
+            _debugger.ExecutionCompleted += () =>
             {
-                var item = new TreeViewItem
+                Dispatcher.Invoke(() =>
                 {
-                    Header = Path.GetFileName(file),
-                    Tag = file,
-                    Foreground = Brushes.LightGray
-                };
-                scriptsItem.Items.Add(item);
-            }
-
-            FileTreeView.Items.Add(scriptsItem);
-
-            // Libs folder (read-only indicator)
-            var libsDir = Path.Combine(_workspacePath, "Libs");
-            if (Directory.Exists(libsDir))
-            {
-                var libsItem = new TreeViewItem
-                {
-                    Header = "Libs",
-                    IsExpanded = false,
-                    Foreground = Brushes.Gray
-                };
-
-                foreach (var file in Directory.GetFiles(libsDir, "*.dll").OrderBy(f => f))
-                {
-                    libsItem.Items.Add(new TreeViewItem
-                    {
-                        Header = Path.GetFileName(file),
-                        Foreground = Brushes.Gray
-                    });
-                }
-
-                FileTreeView.Items.Add(libsItem);
-            }
-        }
-
-        private async void FileTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            if (FileTreeView.SelectedItem is not TreeViewItem item || item.Tag == null) return;
-            var filePath = item.Tag.ToString()!;
-            var fileName = Path.GetFileName(filePath);
-
-            await OpenFileAndNavigate(fileName, 1, 1);
-        }
-
-        private async void NewFile_Click(object sender, RoutedEventArgs e)
-        {
-            var fileName = "NewScript.cs";
-            int count = 1;
-            while (File.Exists(Path.Combine(_workspacePath, fileName)))
-                fileName = $"NewScript{count++}.cs";
-
-            var template = "using System;\n\nnamespace Scripts\n{\n    public class NewScript\n    {\n    }\n}\n";
-            await File.WriteAllTextAsync(Path.Combine(_workspacePath, fileName), template);
-
-            var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-            await AddEditorTab(fileName, new Uri(editorPath).AbsoluteUri, false);
-
-            var tab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
-            if (tab != null) tab.IsChecked = true;
-
-            RefreshFileTree();
-            AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
-        }
-
-        // ========== Search ==========
-
-        private void SearchBtn_Click(object sender, RoutedEventArgs e) => PerformSearch();
-
-        private void SearchTextBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter) PerformSearch();
-        }
-
-        private void PerformSearch()
-        {
-            var query = SearchTextBox.Text?.Trim();
-            if (string.IsNullOrEmpty(query) || !Directory.Exists(_workspacePath)) return;
-
-            SearchResultsList.Items.Clear();
-
-            foreach (var file in Directory.GetFiles(_workspacePath, "*.cs"))
-            {
-                var lines = File.ReadAllLines(file);
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    if (lines[i].Contains(query, StringComparison.OrdinalIgnoreCase))
-                    {
-                        SearchResultsList.Items.Add(new SearchResultItem
-                        {
-                            FileName = Path.GetFileName(file),
-                            Line = i + 1,
-                            Preview = lines[i].Trim(),
-                            FullPath = file
-                        });
-                    }
-                }
-            }
-        }
-
-        private async void ReplaceAllBtn_Click(object sender, RoutedEventArgs e)
-        {
-            var search = SearchTextBox.Text?.Trim();
-            var replace = ReplaceTextBox.Text ?? "";
-            if (string.IsNullOrEmpty(search)) return;
-
-            int totalReplacements = 0;
-            foreach (var kvp in _editors)
-            {
-                var content = await GetEditorContent(kvp.Value);
-                if (content.Contains(search, StringComparison.OrdinalIgnoreCase))
-                {
-                    var newContent = Regex.Replace(content, Regex.Escape(search), replace, RegexOptions.IgnoreCase);
-                    var safeContent = JsonSerializer.Serialize(newContent);
-                    await kvp.Value.ExecuteScriptAsync($"setContent({safeContent})");
-                    MarkDirty(kvp.Key);
-                    totalReplacements++;
-                }
-            }
-
-            AppendLog($"Replaced in {totalReplacements} file(s).", Brushes.DeepSkyBlue);
-        }
-
-        private async void SearchResult_DoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            if (SearchResultsList.SelectedItem is not SearchResultItem item) return;
-            await OpenFileAndNavigate(item.FileName, item.Line, 1);
-        }
-
-        // ========== Sidebar Toggle ==========
-
-        private void SidebarToggle_Changed(object sender, RoutedEventArgs e)
-        {
-            if (sender is not ToggleButton toggle) return;
-
-            // Uncheck other toggles
-            if (toggle == ExplorerToggle && toggle.IsChecked == true)
-                SearchToggle.IsChecked = false;
-            else if (toggle == SearchToggle && toggle.IsChecked == true)
-                ExplorerToggle.IsChecked = false;
-
-            bool anyChecked = ExplorerToggle.IsChecked == true || SearchToggle.IsChecked == true;
-            SidebarPanel.Visibility = anyChecked ? Visibility.Visible : Visibility.Collapsed;
-            ExplorerPanel.Visibility = ExplorerToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-            SearchPanel.Visibility = SearchToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        // ========== Bottom Panel ==========
-
-        private void PanelTab_Checked(object sender, RoutedEventArgs e)
-        {
-            if (ScriptLogBox == null) return; // Not yet loaded
-
-            ScriptLogBox.Visibility = OutputTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-            ProblemsListView.Visibility = ProblemsTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-            DebugConsolePanel.Visibility = DebugConsoleTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        private void UpdateProblemsPanel()
-        {
-            ProblemsListView.Items.Clear();
-            int errors = 0, warnings = 0;
-
-            foreach (var kvp in _allDiagnostics)
-            {
-                foreach (var diag in kvp.Value)
-                {
-                    ProblemsListView.Items.Add(new ProblemItem
-                    {
-                        Severity = diag.Severity == 8 ? "Error" : "Warning",
-                        Message = diag.Message,
-                        FileName = kvp.Key,
-                        Line = diag.StartLine
-                    });
-
-                    if (diag.Severity == 8) errors++;
-                    else warnings++;
-                }
-            }
-
-            ErrorCountText.Text = errors.ToString();
-            WarningCountText.Text = warnings.ToString();
-            ProblemCountText.Text = errors + warnings > 0 ? $"({errors + warnings})" : "";
-        }
-
-        private async void ProblemItem_DoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            if (ProblemsListView.SelectedItem is not ProblemItem item) return;
-            await OpenFileAndNavigate(item.FileName, item.Line, 1);
+                    ContinueBtn.IsEnabled = false;
+                    StopDebugBtn.IsEnabled = false;
+                    DebugBtn.IsEnabled = true;
+                    SetStatus("Ready");
+                    AppendLog("Debug session ended.", Brushes.Gray);
+                });
+            };
         }
 
         // ========== Toolbar Actions ==========
-
-        private async void SaveBtn_Click(object sender, RoutedEventArgs e)
-        {
-            await SaveAllFilesAsync();
-            SetStatus("Saved");
-        }
-
-        private async void ReloadBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (MessageBox.Show("Discard changes and reload from disk?", "Reload",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-            {
-                await InitializeEditorsAsync();
-                RefreshFileTree();
-                AppendLog("Reloaded from disk.", Brushes.DeepSkyBlue);
-            }
-        }
 
         private async void BuildBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -930,7 +600,17 @@ namespace ProtoTestTool
 
             try
             {
-                await SaveAllFilesAsync();
+                if (_editorMode == EditorMode.Monaco)
+                {
+                    await SaveAllMonacoFilesAsync();
+                    AppendLog($"Saved {_editors.Count} files.", Brushes.Gray);
+                }
+                else
+                {
+                    // VS Code auto-save: wait for flush
+                    await Task.Delay(300);
+                }
+
                 AppendLog("Requesting Compilation...", Brushes.Gray);
                 OnRequestCompilation?.Invoke();
             }
@@ -945,16 +625,43 @@ namespace ProtoTestTool
             }
         }
 
+        private void StopBtn_Click(object sender, RoutedEventArgs e)
+        {
+            _debugger.Stop();
+        }
+
         private async void DebugBtn_Click(object sender, RoutedEventArgs e)
         {
-            var activeTab = TabsPanel.Children.OfType<RadioButton>()
-                .FirstOrDefault(t => t.IsChecked == true);
-            if (activeTab?.Tag == null) return;
+            string? code = null;
 
-            var fileName = activeTab.Tag.ToString()!;
-            if (!_editors.TryGetValue(fileName, out var editor)) return;
+            if (_editorMode == EditorMode.Monaco)
+            {
+                var activeTab = TabsPanel.Children.OfType<RadioButton>()
+                    .FirstOrDefault(t => t.IsChecked == true);
+                if (activeTab?.Tag == null) return;
 
-            var code = await GetEditorContent(editor);
+                var fileName = activeTab.Tag.ToString()!;
+                if (!_editors.TryGetValue(fileName, out var editor)) return;
+
+                code = await GetMonacoEditorContent(editor);
+            }
+            else
+            {
+                // VS Code mode: read the active file from disk
+                var csFiles = Directory.GetFiles(_workspacePath, "*.cs");
+                if (csFiles.Length == 0)
+                {
+                    AppendLog("[Debug] No .cs files found.", Brushes.Orange);
+                    return;
+                }
+
+                // Use first file or show dialog
+                var targetFile = csFiles.FirstOrDefault(f => Path.GetFileName(f).Equals("PacketInterceptor.cs", StringComparison.OrdinalIgnoreCase))
+                    ?? csFiles[0];
+                code = await File.ReadAllTextAsync(targetFile);
+                AppendLog($"[Debug] Debugging: {Path.GetFileName(targetFile)}", Brushes.DeepSkyBlue);
+            }
+
             if (string.IsNullOrWhiteSpace(code))
             {
                 AppendLog("[Debug] No code to debug.", Brushes.Orange);
@@ -965,7 +672,6 @@ namespace ProtoTestTool
             StopDebugBtn.IsEnabled = true;
             DebugConsoleTab.IsChecked = true;
             SetStatus("Debugging...");
-            AppendLog($"Starting debug: {fileName}", Brushes.DeepSkyBlue);
 
             await _debugger.ExecuteWithDebuggerAsync(code);
         }
@@ -977,54 +683,30 @@ namespace ProtoTestTool
             window.ShowDialog();
         }
 
-        // ========== Interceptor Creation ==========
-
-        private void AddProxyInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ProxyInterceptor", "PacketInterceptor_Proxy");
-        private void AddClientInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ClientInterceptor", "PacketInterceptor_Client");
-        private void AddReplayInterceptor_Click(object sender, RoutedEventArgs e) => CreateInterceptor("ReplayInterceptor", "PacketInterceptor_Replay");
-
-        private async void CreateInterceptor(string baseName, string templateType)
+        private async void RestartServerBtn_Click(object sender, RoutedEventArgs e)
         {
-            string fileName = $"{baseName}.cs";
-            int count = 1;
-            while (File.Exists(Path.Combine(_workspacePath, fileName)))
-                fileName = $"{baseName}{count++}.cs";
+            _vsCodeManager.StopServer();
+            VsCodeWebView.Visibility = Visibility.Collapsed;
 
-            try
-            {
-                var template = ScriptTemplateFactory.GetTemplate(templateType);
-                await File.WriteAllTextAsync(Path.Combine(_workspacePath, fileName), template);
+            foreach (var editor in _editors.Values)
+                editor.Dispose();
+            _editors.Clear();
+            EditorsGrid.Children.Clear();
+            TabsPanel.Children.Clear();
+            MonacoFallbackGrid.Visibility = Visibility.Collapsed;
 
-                var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
-                await AddEditorTab(fileName, new Uri(editorPath).AbsoluteUri);
-
-                var newTab = TabsPanel.Children.OfType<RadioButton>().LastOrDefault();
-                if (newTab != null) newTab.IsChecked = true;
-
-                RefreshFileTree();
-                AppendLog($"Created {fileName}", Brushes.DeepSkyBlue);
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Create File Error: {ex.Message}", Brushes.Red);
-            }
+            if (_vsCodeManager.IsVsCodeInstalled)
+                await StartVsCodeModeAsync();
+            else
+                await StartMonacoFallbackAsync();
         }
 
-        // ========== Debug Controls (Phase 5 placeholders) ==========
+        // ========== Debug Controls ==========
 
         private void ContinueBtn_Click(object sender, RoutedEventArgs e)
         {
             _debugger.Continue();
             ContinueBtn.IsEnabled = false;
-            StepOverBtn.IsEnabled = false;
-        }
-
-        private void StepOverBtn_Click(object sender, RoutedEventArgs e)
-        {
-            // Step Over = Continue + will break on next line
-            _debugger.Continue();
-            ContinueBtn.IsEnabled = false;
-            StepOverBtn.IsEnabled = false;
         }
 
         private void StopDebugBtn_Click(object sender, RoutedEventArgs e)
@@ -1032,9 +714,38 @@ namespace ProtoTestTool
             _debugger.Stop();
         }
 
+        // ========== Bottom Panel ==========
+
+        private void PanelTab_Checked(object sender, RoutedEventArgs e)
+        {
+            if (ScriptLogBox == null) return;
+
+            ScriptLogBox.Visibility = OutputTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            DebugConsolePanel.Visibility = DebugConsoleTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ========== Lifecycle ==========
+
+        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            _vsCodeManager.Dispose();
+
+            foreach (var editor in _editors.Values)
+            {
+                try { editor.Dispose(); } catch { }
+            }
+            _editors.Clear();
+        }
+
         // ========== Legacy Compatibility ==========
 
         public Task UpdateCompletionsAsync(string json) => Task.CompletedTask;
+
+        public async Task RefreshIntelliSenseAsync()
+        {
+            if (_editorMode == EditorMode.Monaco)
+                await InitializeIntelliSenseAsync();
+        }
 
         // ========== Logging ==========
 
@@ -1059,7 +770,14 @@ namespace ProtoTestTool
         }
     }
 
-    // ========== Data Models ==========
+    // ========== Enums & Data Models ==========
+
+    public enum EditorMode
+    {
+        Loading,
+        VsCode,
+        Monaco
+    }
 
     public class SearchResultItem
     {

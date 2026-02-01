@@ -102,6 +102,10 @@ namespace ProtoTestTool
                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
 
                 UpdateIntellisense(assembly, logAction);
+
+                // Update .csproj for VS Code IntelliSense
+                try { VsCodeWorkspaceSetup.UpdateProjectReferences(workspacePath); }
+                catch { /* non-critical */ }
             }
             catch (Exception ex)
             {
@@ -530,6 +534,14 @@ namespace ProtoTestTool
 
                 // Refresh PacketSelector
                 PacketSelectorControl.Refresh();
+
+                // Update .csproj for VS Code IntelliSense
+                try
+                {
+                    var wp = !string.IsNullOrEmpty(_workspacePath) ? _workspacePath : targetDir;
+                    VsCodeWorkspaceSetup.UpdateProjectReferences(wp);
+                }
+                catch { /* non-critical */ }
 
                 // Update ScriptEditorWindow Intellisense if open
                 if (_scriptEditorWindow != null && _scriptEditorWindow.IsLoaded)
