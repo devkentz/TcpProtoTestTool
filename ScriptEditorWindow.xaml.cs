@@ -768,6 +768,142 @@ namespace ProtoTestTool
         {
             Dispatcher.Invoke(() => StatusText.Text = status);
         }
+
+        // ========== File Explorer ==========
+
+        public class FileItem
+        {
+            public string Name { get; set; } = "";
+            public string FullPath { get; set; } = "";
+            public string Icon { get; set; } = "/Assets/file_code.png"; // Placeholder
+            public bool IsDirectory { get; set; }
+        }
+
+        private void LoadFileStructure()
+        {
+            try
+            {
+                if (!Directory.Exists(_workspacePath)) Directory.CreateDirectory(_workspacePath);
+
+                var items = new List<FileItem>();
+                
+                // For now, flat list of specialized files, or just all files
+                var files = Directory.GetFiles(_workspacePath, "*.*");
+                foreach (var file in files)
+                {
+                    var ext = Path.GetExtension(file).ToLower();
+                    if (ext != ".cs" && ext != ".json" && ext != ".txt") continue;
+
+                    items.Add(new FileItem 
+                    { 
+                        Name = Path.GetFileName(file), 
+                        FullPath = file,
+                        Icon = ext == ".cs" ? "pack://application:,,,/Fluent;component/Assets/AlignLeftBC24.png" : "pack://application:,,,/Fluent;component/Assets/AlignLeftBC24.png" // Placeholder icons
+                    });
+                }
+
+                FileTreeView.ItemsSource = items;
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Explorer] Error: {ex.Message}", Brushes.Red);
+            }
+        }
+
+        private void FileTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (FileTreeView.SelectedItem is FileItem item)
+            {
+                if (_editorMode == EditorMode.Monaco)
+                {
+                     // Check if already open
+                     // Switch tab or add
+                     // For now, simplistic: just add tab
+                     // AddMonacoTab handles duplication via key check? 
+                     // No, AddMonacoTab blindly adds. Need check.
+                     var fileName = item.Name;
+                     var exists = _editors.ContainsKey(fileName);
+                     if (exists)
+                     {
+                         // Switch to it
+                         var radio = TabsPanel.Children.OfType<RadioButton>().FirstOrDefault(r => r.Tag?.ToString() == fileName);
+                         if (radio != null) radio.IsChecked = true;
+                     }
+                     else
+                     {
+                         // Add new
+                         var editorPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Monaco", "editor.html");
+                         _ = AddMonacoTab(fileName, new Uri(editorPath).AbsoluteUri, true);
+                     }
+                }
+                else
+                {
+                    // VS Code mode - maybe just log or try to navigate?
+                    // VS Code handles its own file explorer usually, so this might be redundant if we use internal VS Code.
+                    // But if we use external Server, we might want to control it.
+                    // For now, do nothing or send open command if supported.
+                }
+            }
+        }
+
+        private async void NewScript_Click(object sender, RoutedEventArgs e)
+        {
+            var name = $"Script_{DateTime.Now.Ticks}.cs";
+            var path = Path.Combine(_workspacePath, name);
+            // Default Template
+            await File.WriteAllTextAsync(path, "// New Script\nusing System;\n\npublic class Script \n{\n    public void Run()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}");
+            LoadFileStructure();
+        }
+
+        private async void NewInterceptor_Click(object sender, RoutedEventArgs e)
+        {
+            var name = $"Interceptor_{DateTime.Now.Ticks}.cs";
+            var path = Path.Combine(_workspacePath, name);
+            
+            // Generate Unified Interceptor Template
+            var code = ScriptTemplateFactory.GetInterceptorTemplate(); 
+            await File.WriteAllTextAsync(path, code);
+            
+            LoadFileStructure();
+        }
+
+        private void OpenInExplorer_Click(object sender, RoutedEventArgs e)
+        {
+             System.Diagnostics.Process.Start("explorer.exe", _workspacePath);
+        }
+
+        private void RenameFile_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileTreeView.SelectedItem is FileItem item)
+            {
+                // Simple Input Dialog (using VisualBasic or custom)
+                // For brevity, using a customized MessageBox or just skipping implementation for now 
+                // as full InputDialog in wpf requires a Window class.
+                // Assuming user will rename in Explorer for now or I implement a helper later.
+                AppendLog("Rename not implemented yet. Use 'Open in Explorer'.", Brushes.Orange);
+            }
+        }
+
+         private void DeleteFile_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileTreeView.SelectedItem is FileItem item)
+            {
+                var res = MessageBox.Show($"Delete {item.Name}?", "Confirm", MessageBoxButton.YesNo);
+                if (res == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        File.Delete(item.FullPath);
+                        LoadFileStructure();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"Delete failed: {ex.Message}", Brushes.Red);
+                    }
+                }
+            }
+        }
+
     }
 
     // ========== Enums & Data Models ==========

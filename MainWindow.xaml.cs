@@ -175,30 +175,44 @@ namespace ProtoTestTool
             }
         }
 
-        private Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
+        private async Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
         {
             try
             {
                 if (_networkService == null || !_networkService.IsConnected)
                 {
                     AppendLog("Cannot send: Disconnected", Brushes.Red);
-                    return Task.CompletedTask;
+                    return;
                 }
+
+                var ctx = new PacketContext(message);
+
+                // Run Active Interceptors
+                var activeInterceptors = ClientInterceptorSelector.GetActiveInterceptors();
+                var assembly = _scriptAssembly;
                 
-                // Interceptor Hook
-                if (_clientInterceptor != null) 
+                if (assembly != null && activeInterceptors.Count > 0)
                 {
-                    var ctx = new ClientPacketContext(message);
-                    try
+                    foreach (var name in activeInterceptors)
                     {
-                        _clientInterceptor.OnBeforeSend(ctx);
-                        message = ctx.Message; // Allow modification
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendLog($"[Interceptor Error] {ex.Message}", Brushes.Red);
+                        var type = assembly.GetTypes().FirstOrDefault(t => t.Name == name);
+                        if (type != null)
+                        {
+                            try
+                            {
+                                var interceptor = (IPacketInterceptor)Activator.CreateInstance(type)!;
+                                await interceptor.OnOutboundAsync(ctx);
+                            }
+                            catch (Exception ex)
+                            {
+                                AppendLog($"[Interceptor {name}] Error: {ex.Message}", Brushes.Red);
+                            }
+                        }
                     }
                 }
+
+                if (ctx.Message == null) return; // Drop?
+                message = ctx.Message;
 
                 var packet = new Packet(headerObj, message);
 
@@ -206,7 +220,7 @@ namespace ProtoTestTool
                 if (ScriptGlobals.Codec == null) throw new Exception("PacketCodec not initialized.");
 
                 var bytes = ScriptGlobals.Codec.Encode(packet);
-                _networkService.SendAsync(bytes); 
+                await _networkService.SendAsync(bytes); 
 
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
                 
@@ -220,7 +234,6 @@ namespace ProtoTestTool
             {
                 AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
             }
-            return Task.CompletedTask;
         }
 
         private ScriptEditorWindow? _scriptEditorWindow;
@@ -252,12 +265,9 @@ namespace ProtoTestTool
 
             Title = $"ProtoTestTool - {_workspacePath}";
 
-            // LoadWorkspaceConfiguration internally triggers LoadWorkspaceAsync
-            // (Proto load + Script compile) via fire-and-forget
+            // Load Config
             LoadWorkspaceConfiguration(_workspacePath);
         }
-
-
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e) => _ = MainWindow_LoadedAsync();
 
@@ -283,7 +293,6 @@ namespace ProtoTestTool
                     this.Top = (screenHeight - this.Height) / 2;
                 }
 
-
                 await Task.CompletedTask;
             }
             catch (Exception ex)
@@ -292,7 +301,94 @@ namespace ProtoTestTool
             }
         }
 
+        private WorkspaceConfig? _currentConfig;
 
+        private void LoadWorkspaceConfiguration(string workspacePath)
+        {
+             try
+             {
+                 _currentConfig = WorkspaceConfig.Load(workspacePath);
+                 
+                 // Apply Config to UI
+                 IpBox.Text = _currentConfig.TargetIp;
+                 if (PortBox != null) PortBox.Text = _currentConfig.TargetPort.ToString();
+                 if (ProxyLocalPortBox != null) ProxyLocalPortBox.Text = _currentConfig.ProxyLocalPort.ToString();
+                 if (ProxyTargetIpBox != null) ProxyTargetIpBox.Text = _currentConfig.ProxyTargetIp;
+                 if (ProxyTargetPortBox != null) ProxyTargetPortBox.Text = _currentConfig.ProxyTargetPort.ToString();
+
+                 var protoPath = _currentConfig.ProtoFolderPath;
+
+                 // Auto-discovery if config is empty
+                 if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
+                 {
+                     try
+                     {
+                         if (Directory.GetFiles(workspacePath, "*.proto", SearchOption.AllDirectories).Length > 0)
+                         {
+                             protoPath = workspacePath;
+                             _currentConfig.ProtoFolderPath = protoPath; // Update config in memory
+                         }
+                     }
+                     catch { }
+                 }
+
+                 _protoFolderPath = protoPath ?? "";
+
+                 // Trigger Async Initialization Sequence
+                 _ = InitializeWorkspaceSequenceAsync(workspacePath, _protoFolderPath);
+             }
+             catch (Exception ex)
+             {
+                 AppendLog($"[Config] Error loading config: {ex.Message}", Brushes.Orange);
+             }
+        }
+
+        private async Task InitializeWorkspaceSequenceAsync(string workspacePath, string protoPath)
+        {
+             try 
+             {
+                 if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
+                 {
+                     await LoadProtosFromFolderAsync(protoPath);
+                 }
+                 
+                 Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
+                 await CompileScriptsAsync(workspacePath, (msg, brush) => Dispatcher.Invoke(() => AppendLog(msg, brush)));
+             }
+             catch (Exception ex)
+             {
+                 Dispatcher.Invoke(() => AppendLog($"[Init] Error: {ex.Message}", Brushes.Red));
+             }
+             finally
+             {
+                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
+             }
+        }
+
+        private void SaveWorkspaceConfiguration()
+        {
+             if (string.IsNullOrEmpty(_workspacePath)) return;
+             if (_currentConfig == null) _currentConfig = new WorkspaceConfig();
+
+             if (IpBox != null) _currentConfig.TargetIp = IpBox.Text;
+             if (PortBox != null && int.TryParse(PortBox.Text, out var port)) _currentConfig.TargetPort = port;
+             
+             if (ProxyLocalPortBox != null && int.TryParse(ProxyLocalPortBox.Text, out var pPort)) _currentConfig.ProxyLocalPort = pPort;
+             if (ProxyTargetIpBox != null) _currentConfig.ProxyTargetIp = ProxyTargetIpBox.Text;
+             if (ProxyTargetPortBox != null && int.TryParse(ProxyTargetPortBox.Text, out var ptPort)) _currentConfig.ProxyTargetPort = ptPort;
+
+             // Save Active Interceptors
+             if (ClientInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Client"] = ClientInterceptorSelector.GetActiveInterceptors();
+             
+             if (ProxyInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Proxy"] = ProxyInterceptorSelector.GetActiveInterceptors();
+             
+             if (ReplayInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Replay"] = ReplayInterceptorSelector.GetActiveInterceptors();
+
+             _currentConfig.Save(_workspacePath);
+        }
 
         #region Workspace Management
 
@@ -379,113 +475,9 @@ namespace ProtoTestTool
             UpdateWorkspaceUI();
         }
 
-        private void LoadWorkspaceConfiguration(string path)
-        {
-            WorkspaceConfig config;
-            try
-            {
-                config = WorkspaceConfig.Load(path);
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[Config] Failed to load workspace_config.json: {ex.Message}", Brushes.Red);
-                config = new WorkspaceConfig();
-            }
 
-            // Connection
-            IpBox.Text = config.TargetIp;
-            PortBox.Text = config.TargetPort.ToString();
 
-            // Proxy
-            ProxyLocalPortBox.Text = config.ProxyLocalPort.ToString();
-            ProxyTargetIpBox.Text = config.ProxyTargetIp;
-            ProxyTargetPortBox.Text = config.ProxyTargetPort.ToString();
 
-            // Proto Path - Load protos first
-            var protoPath = config.ProtoFolderPath;
-
-            // Auto-discovery if config is empty
-            if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
-            {
-                try
-                {
-                    if (Directory.GetFiles(path, "*.proto", SearchOption.AllDirectories).Length > 0)
-                    {
-                        protoPath = path;
-                    }
-                }
-                catch
-                {
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
-            {
-                _protoFolderPath = protoPath;
-                // Asynchronously load protos and then compile scripts
-                _ = LoadWorkspaceAsync(path, protoPath);
-            }
-            else
-            {
-                // No proto folder, just compile scripts
-                _ = CompileWorkspaceScriptsAsync(path);
-            }
-        }
-
-        private async Task LoadWorkspaceAsync(string workspacePath, string protoFolderPath)
-        {
-            try
-            {
-                // 1. Load Proto files first
-                await LoadProtosFromFolderAsync(protoFolderPath);
-
-                // 2. Then compile CSX scripts
-                await CompileWorkspaceScriptsAsync(workspacePath);
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() => AppendLog($"[Error] Workspace load failed: {ex.Message}", Brushes.Red));
-            }
-            finally
-            {
-                await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
-            }
-        }
-
-        private async Task CompileWorkspaceScriptsAsync(string workspacePath)
-        {
-            if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath)) return;
-
-            // Check if required script files exist
-            // Delegate validation to CompileScriptsAsync
-            try
-            {
-                Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
-                await CompileScriptsAsync(workspacePath, (msg, color) => Dispatcher.Invoke(() => AppendLog(msg, color)));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() => AppendLog($"[Error] Auto-compile failed: {ex.Message}", Brushes.Red));
-            }
-        }
-
-        private void SaveWorkspaceConfiguration()
-        {
-            if (string.IsNullOrWhiteSpace(_workspacePath) || !Directory.Exists(_workspacePath)) return;
-
-            var config = new WorkspaceConfig
-            {
-                TargetIp = IpBox.Text,
-                ProtoFolderPath = _protoFolderPath,
-                ProxyTargetIp = ProxyTargetIpBox.Text
-            };
-
-            if (int.TryParse(PortBox.Text, out var port)) config.TargetPort = port;
-            if (int.TryParse(ProxyLocalPortBox.Text, out var pLocal)) config.ProxyLocalPort = pLocal;
-            if (int.TryParse(ProxyTargetPortBox.Text, out var pTarget)) config.ProxyTargetPort = pTarget;
-
-            config.Save(_workspacePath);
-        }
 
         // Field to track current proto folder
         private string _protoFolderPath = "";
@@ -738,36 +730,7 @@ namespace ProtoTestTool
 
         public void SendPacket(IHeader header, IMessage message)
         {
-            if (_networkService == null || !_networkService.IsConnected)
-            {
-                AppendLog("Not connected.", Brushes.Red);
-                return;
-            }
-
-            if (ScriptGlobals.Codec == null)
-            {
-                AppendLog("Codec not initialized (Compile first).", Brushes.Red);
-                return;
-            }
-
-            try
-            {
-                // Client Interceptor Hook
-                if (_clientInterceptor != null)
-                {
-                    var ctx = new ClientPacketContext(message);
-                    _clientInterceptor.OnBeforeSend(ctx);
-                    message = ctx.Message;
-                }
-
-                var bytes = ScriptGlobals.Codec.Encode(new Packet(header, message));
-                _networkService.SendAsync(bytes);
-                AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"Send Error: {ex.Message}", Brushes.Red);
-            }
+            _ = SendPacketPipelineAsync(message, header, isReplay: false);
         }
 
 

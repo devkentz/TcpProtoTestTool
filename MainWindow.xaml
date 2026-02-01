@@ -171,12 +171,17 @@
                                         </DockPanel>
                                     </StackPanel>
 
-                                    <!-- Right: Send Button -->
+                                    <!-- Send Button -->
                                     <ui:Button x:Name="SendBtn" Grid.Column="1" Content="Send Packet" Width="140"
                                                Height="40" Click="SendBtn_Click" IsEnabled="False" Appearance="Primary"
                                                Icon="Send24" VerticalAlignment="Bottom" />
                                 </Grid>
                             </ui:Card>
+
+                            <!-- Interceptors for Manual Send -->
+                            <Expander Header="Interceptors" Padding="0" Margin="0,0,0,15" IsExpanded="False">
+                                <controls:InterceptorSelector x:Name="ClientInterceptorSelector" Height="150" />
+                            </Expander>
 
                             <!-- Inspector -->
                             <Grid Grid.Row="1">
@@ -266,6 +271,10 @@
                                 <ui:Button Content="Replay All" Icon="Play24" Appearance="Primary" Margin="20,0,0,0"
                                            Click="ReplayAllBtn_Click" />
                             </StackPanel>
+
+                            <Expander Header="Replay Interceptors" IsExpanded="False" Margin="0,0,0,10">
+                                <controls:InterceptorSelector x:Name="ReplayInterceptorSelector" Height="150" />
+                            </Expander>
 
                             <!-- Content Split -->
                             <Grid Grid.Row="1">
@@ -395,8 +404,7 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <TextBlock Text="Interceptors" Margin="15,10" FontWeight="Bold" />
-                            <ListBox x:Name="InterceptorListBox" Grid.Row="1" BorderThickness="0"
-                                     Background="Transparent" Margin="5" />
+                            <controls:InterceptorSelector x:Name="ProxyInterceptorSelector" Grid.Row="1" Margin="5" />
                         </Grid>
                     </ui:Card>
 

@@ -7,10 +7,10 @@ namespace ProtoTestTool.Network
 {
     public class ProxyInterceptorPipeline
     {
-        private readonly List<IProxyPacketInterceptor> _interceptors = new();
+        private readonly List<IPacketInterceptor> _interceptors = new();
         private readonly object _lock = new();
 
-        public void Add(IProxyPacketInterceptor interceptor)
+        public void Add(IPacketInterceptor interceptor)
         {
             lock (_lock)
             {
@@ -26,12 +26,12 @@ namespace ProtoTestTool.Network
             }
         }
 
-        public async ValueTask RunInboundAsync(ProxyPacketContext context)
+        public async ValueTask RunInboundAsync(PacketContext context)
         {
-            List<IProxyPacketInterceptor> snapshot;
+            List<IPacketInterceptor> snapshot;
             lock (_lock)
             {
-                snapshot = new List<IProxyPacketInterceptor>(_interceptors);
+                snapshot = new List<IPacketInterceptor>(_interceptors);
             }
 
             foreach (var interceptor in snapshot)
@@ -41,12 +41,12 @@ namespace ProtoTestTool.Network
             }
         }
 
-        public async ValueTask RunOutboundAsync(ProxyPacketContext context)
+        public async ValueTask RunOutboundAsync(PacketContext context)
         {
-            List<IProxyPacketInterceptor> snapshot;
+            List<IPacketInterceptor> snapshot;
             lock (_lock)
             {
-                snapshot = new List<IProxyPacketInterceptor>(_interceptors);
+                snapshot = new List<IPacketInterceptor>(_interceptors);
             }
 
             foreach (var interceptor in snapshot)

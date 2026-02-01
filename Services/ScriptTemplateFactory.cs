@@ -11,10 +11,7 @@ namespace ProtoTestTool.Services
                 "PacketLoader" => GetPacketLoaderTemplate(),
                 "PacketHeader" => GetPacketHeaderTemplate(),
                 "PacketCodec" => GetPacketCodecTemplate(),
-                "PacketInterceptor_Proxy" => GetProxyInterceptorTemplate(),
-                "PacketInterceptor_Client" => GetClientInterceptorTemplate(),
-                "PacketInterceptor_Replay" => GetReplayInterceptorTemplate(),
-                "PacketInterceptor" => GetProxyInterceptorTemplate(), // Default
+                "PacketInterceptor" => GetInterceptorTemplate(),
                 _ => "// Not found"
             };
         }
@@ -99,64 +96,30 @@ public class PacketCodec : IPacketCodec
     }
 }";
 
-        public static string GetProxyInterceptorTemplate() =>
+        public static string GetInterceptorTemplate() =>
 @"using System;
 using System.Threading.Tasks;
 using ProtoTestTool.ScriptContract;
 
-// [Optional] Proxy Packet Interception Logic
-public class ProxyInterceptor : IProxyPacketInterceptor
+// [Optional] Unified Packet Interception Logic
+// Works for Manual Send, Proxy, and Replay (Server <-> Client)
+public class MyInterceptor : IPacketInterceptor
 {
-    // [Optional] Called before sending a packet to the server (Upstream)
-    public ValueTask OnInboundAsync(ProxyPacketContext context)
+    // [Manual Send / Proxy Request / Replay Request]
+    // Called when a packet is going OUT to the Server.
+    public ValueTask OnOutboundAsync(PacketContext context)
     {
-        // Example: Modify context.Packet before forwarding to server
+        // Example: Inspect or Modify
+        // if (context.Packet is LoginReq req) { ... }
         return ValueTask.CompletedTask;
     }
 
-    // [Optional] Called before sending a packet to the client (Downstream)
-    public ValueTask OnOutboundAsync(ProxyPacketContext context)
+    // [Proxy Response / Replay Response]
+    // Called when a packet is coming IN from the Server.
+    public ValueTask OnInboundAsync(PacketContext context)
     {
-        // Example: Log or modify context.Packet before forwarding to client
-        return ValueTask.CompletedTask;
-    }
-}";
-
-        public static string GetClientInterceptorTemplate() =>
-@"using System;
-using System.Threading.Tasks;
-using ProtoTestTool.ScriptContract;
-
-// [Optional] Client Packet Interception Logic
-// Intercepts packets sent/received by the Test Client features.
-public class ClientInterceptor : IClientPacketInterceptor
-{
-    public void OnBeforeSend(ClientPacketContext context)
-    {
-        // Called before sending to server
-        // Example: context.Message = new LoginReq();
-    }
-}";
-
-        public static string GetReplayInterceptorTemplate() =>
-@"using System;
-using System.Threading.Tasks;
-using ProtoTestTool.ScriptContract;
-
-// [Optional] Replay Packet Interception Logic
-// Used during Packet Replay mode to simulate state or modify replayed packets.
-// Note: Uses the same interface as Proxy, but context might differ.
-public class ReplayInterceptor : IProxyPacketInterceptor
-{
-    public ValueTask OnInboundAsync(ProxyPacketContext context)
-    {
-        // Handle Request Replay
-        return ValueTask.CompletedTask;
-    }
-
-    public ValueTask OnOutboundAsync(ProxyPacketContext context)
-    {
-        // Handle Response Replay
+        // Example: Log or Drop
+        // context.Drop = true; 
         return ValueTask.CompletedTask;
     }
 }";

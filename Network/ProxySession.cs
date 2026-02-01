@@ -76,7 +76,7 @@ namespace ProtoTestTool.Network
                         var rawMemory = new ReadOnlyMemory<byte>(accumulator.WrittenSpan[..consumed].ToArray());
                         accumulator.Consume(consumed);
 
-                        var context = new ProxyPacketContext(packet, direction, rawMemory);
+                        var context = new PacketContext(packet, direction, rawMemory);
 
                         if (PacketRecorder.Proxy.IsRecording)
                         {

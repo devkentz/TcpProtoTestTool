@@ -15,7 +15,10 @@ namespace ProtoTestTool
         private ProxyServer? _proxyServer;
         private ProxyInterceptorPipeline? _proxyPipeline; // Hot Reload Support
         private IScriptStateStore? _scriptState;
-        private IClientPacketInterceptor? _clientInterceptor;
+        
+        // _currentConfig is managed in MainWindow.xaml.cs part
+
+
 
         private static readonly Regex GeneratedDllPattern = new(@".+\.[a-fA-F0-9]{8}\.dll$", RegexOptions.Compiled);
 
@@ -116,7 +119,6 @@ namespace ProtoTestTool
         private void UnloadPreviousAssembly()
         {
             _proxyPipeline?.Clear();
-            _clientInterceptor = null;
 
             if (_workspaceAssemblyContext != null)
             {
@@ -221,27 +223,37 @@ namespace ProtoTestTool
         private void UpdateInterceptors(Assembly assembly, Action<string, Brush> logAction)
         {
             var interceptorTypes = assembly.GetTypes()
-                .Where(t => typeof(IProxyPacketInterceptor).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
+                .Where(t => typeof(IPacketInterceptor).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
+                .Select(t => t.Name)
+                .OrderBy(n => n)
                 .ToList();
 
-            if (_proxyPipeline != null)
+            Dispatcher.Invoke(() =>
             {
-                foreach (var t in interceptorTypes)
-                {
-                    var interceptor = (IProxyPacketInterceptor)Activator.CreateInstance(t)!;
-                    _proxyPipeline.Add(interceptor);
-                }
-                if (_proxyServer != null && _proxyServer.IsStarted)
-                {
-                    logAction($"[HotReload] Updated Proxy Interceptors ({interceptorTypes.Count})", Brushes.LimeGreen);
-                }
-            }
+                var config = _currentConfig ?? new WorkspaceConfig();
 
-            var clientInterceptorType = assembly.GetTypes()
-                .FirstOrDefault(t => typeof(IClientPacketInterceptor).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-            _clientInterceptor = clientInterceptorType != null
-                ? (IClientPacketInterceptor)Activator.CreateInstance(clientInterceptorType)!
-                : null;
+                // Helper to setup selector
+                void SetupSelector(ProtoTestTool.Controls.InterceptorSelector selector, string key)
+                {
+                    var active = config.ActiveInterceptors.TryGetValue(key, out var list) ? list : new List<string>();
+                    selector.SetInterceptors(interceptorTypes, active);
+                    
+                    // Hook event to save on change
+                    selector.SelectionChanged -= Selector_SelectionChanged;
+                    selector.SelectionChanged += Selector_SelectionChanged;
+                }
+
+                SetupSelector(ClientInterceptorSelector, "Client");
+                SetupSelector(ProxyInterceptorSelector, "Proxy");
+                SetupSelector(ReplayInterceptorSelector, "Replay");
+            });
+
+            logAction($"[Interceptors] Found {interceptorTypes.Count} interceptors.", Brushes.LimeGreen);
+        }
+
+        private void Selector_SelectionChanged(object sender, RoutedEventArgs e)
+        {
+             SaveWorkspaceConfiguration();
         }
 
         private void UpdateIntellisense(Assembly assembly, Action<string, Brush> logAction)
@@ -287,22 +299,27 @@ namespace ProtoTestTool
 
                     // 2. Find Interceptors
                     _proxyPipeline = new ProxyInterceptorPipeline(); // Assign to field
-                    var interceptorTypes = assembly.GetTypes()
-                        .Where(t => typeof(IProxyPacketInterceptor).IsAssignableFrom(t) && !t.IsAbstract)
-                        .ToList();
-
-                    // Update UI List
-                    Dispatcher.Invoke(() =>
+                    
+                    // Get Active Interceptors from UI (Dispatcher)
+                    List<string> activeInterceptorNames = new();
+                    Dispatcher.Invoke(() => 
                     {
-                        InterceptorListBox.Items.Clear();
-                        foreach (var t in interceptorTypes)
-                            InterceptorListBox.Items.Add(t.Name);
+                        activeInterceptorNames = ProxyInterceptorSelector.GetActiveInterceptors();
                     });
 
-                    foreach (var t in interceptorTypes)
+                    foreach (var name in activeInterceptorNames)
                     {
-                        var interceptor = (IProxyPacketInterceptor) Activator.CreateInstance(t)!;
-                        _proxyPipeline.Add(interceptor);
+                        var type = assembly.GetTypes().FirstOrDefault(t => t.Name == name);
+                        if (type != null)
+                        {
+                            // Unified IPacketInterceptor
+                            var interceptor = (IPacketInterceptor)Activator.CreateInstance(type)!;
+                            // Adapt to Proxy Pipeline (we need to potentially wrap or update pipeline to accept IPacketInterceptor)
+                            // or casting if pipeline supports it.
+                            // Assuming _proxyPipeline expects IProxyPacketInterceptor... we need to update ProxyPipeline too!
+                            // For now, let's assume ProxyInterceptorPipeline is updated to IPacketInterceptor.
+                             _proxyPipeline.Add(interceptor);
+                        }
                     }
 
                     // 3. Create Server

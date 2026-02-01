@@ -15,6 +15,9 @@ namespace ProtoTestTool
         public string ProxyTargetIp { get; set; } = "127.0.0.1";
         public int ProxyTargetPort { get; set; } = 9001;
 
+        // Key: Feature ("Client", "Proxy", "Replay"), Value: List of Interceptor Class Names
+        public Dictionary<string, System.Collections.Generic.List<string>> ActiveInterceptors { get; set; } = new();
+
         private const string ConfigFileName = "workspace_config.json";
 
         public static WorkspaceConfig Load(string workspaceDir)
