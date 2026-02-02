@@ -11,19 +11,19 @@ using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using Microsoft.Win32;
 using Newtonsoft.Json;
+using ProtoTestTool.Controls;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
 using ProtoTestTool.Services;
 
 namespace ProtoTestTool
 {
-
     public partial class MainWindow
     {
         private INetworkService _networkService; // Use Interface
         private readonly ScriptLoader _scriptLoader = new();
-        private readonly List<byte> _receiveBuffer = new();
- 
+        private readonly Network.ByteBuffer _receiveBuffer = new();
+
         public MainWindow()
         {
             InitializeComponent();
@@ -40,29 +40,29 @@ namespace ProtoTestTool
 
         private void OnConnected()
         {
-             Dispatcher.Invoke(() =>
-             {
-                 AppendLog($"Connected to Server", Brushes.DeepSkyBlue);
-                 UpdateConnectionState(true);
-             });
+            Dispatcher.Invoke(() =>
+            {
+                AppendLog($"Connected to Server", Brushes.DeepSkyBlue);
+                UpdateConnectionState(true);
+            });
         }
 
         private void OnDisconnected()
         {
-             Dispatcher.Invoke(() =>
-             {
-                 AppendLog("Disconnected", Brushes.Orange);
-                 UpdateConnectionState(false);
-             });
+            Dispatcher.Invoke(() =>
+            {
+                AppendLog("Disconnected", Brushes.Orange);
+                UpdateConnectionState(false);
+            });
         }
 
         private void OnError(string err)
         {
-             Dispatcher.Invoke(() =>
-             {
-                 AppendLog($"Socket Error: {err}", Brushes.Red);
-                 UpdateConnectionState(false);
-             });
+            Dispatcher.Invoke(() =>
+            {
+                AppendLog($"Socket Error: {err}", Brushes.Red);
+                UpdateConnectionState(false);
+            });
         }
 
 
@@ -117,6 +117,7 @@ namespace ProtoTestTool
                 {
                     await JsonEditorView.SetTextAsync(json);
                 }
+
                 SendBtn.IsEnabled = _networkService.IsConnected;
             }
             catch (Exception ex)
@@ -163,7 +164,7 @@ namespace ProtoTestTool
 
                 if (header == null)
                 {
-                     throw new Exception("Failed to create Packet Header. Check script compilation or JSON format.");
+                    throw new Exception("Failed to create Packet Header. Check script compilation or JSON format.");
                 }
 
                 // 3. Send
@@ -175,64 +176,69 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task SendPacketPipelineAsync(IMessage message, IHeader headerObj, bool isReplay = false)
+        private async Task SendPacketPipelineAsync(IMessage message, IHeader header, bool isReplay = false)
         {
             try
             {
-                if (_networkService == null || !_networkService.IsConnected)
+                if (!_networkService.IsConnected)
                 {
                     AppendLog("Cannot send: Disconnected", Brushes.Red);
                     return;
                 }
 
-                var ctx = new PacketContext(message);
+                var packet = new Packet(header, message);
+                var ctx = new PacketContext(packet, PacketDirection.Outbound);
 
-                // Run Active Interceptors
-                var activeInterceptors = ClientInterceptorSelector.GetActiveInterceptors();
-                var assembly = _scriptAssembly;
-                
-                if (assembly != null && activeInterceptors.Count > 0)
-                {
-                    foreach (var name in activeInterceptors)
-                    {
-                        var type = assembly.GetTypes().FirstOrDefault(t => t.Name == name);
-                        if (type != null)
-                        {
-                            try
-                            {
-                                var interceptor = (IPacketInterceptor)Activator.CreateInstance(type)!;
-                                await interceptor.OnOutboundAsync(ctx);
-                            }
-                            catch (Exception ex)
-                            {
-                                AppendLog($"[Interceptor {name}] Error: {ex.Message}", Brushes.Red);
-                            }
-                        }
-                    }
-                }
+                var interceptors = GetInterceptors(State == AppState.Replay);
+                await InterceptorCall(ctx, interceptors);
 
-                if (ctx.Message == null) return; // Drop?
-                message = ctx.Message;
+                if (ctx.Drop)
+                    return; // Drop?
 
-                var packet = new Packet(headerObj, message);
+                message = ctx.Packet.Message;
 
                 // Encode & Send
-                if (ScriptGlobals.Codec == null) throw new Exception("PacketCodec not initialized.");
+                if (ScriptGlobals.Codec == null)
+                    throw new Exception("PacketCodec not initialized.");
 
                 var bytes = ScriptGlobals.Codec.Encode(packet);
-                await _networkService.SendAsync(bytes); 
+                await _networkService.SendAsync(bytes);
 
                 AppendLog($"[Send] {message.GetType().Name} ({bytes.Length} bytes)", Brushes.White);
-                
+
                 // Recording
                 if (PacketRecorder.Client.IsRecording)
-                {
                     PacketRecorder.Client.Record(PacketDirection.Outbound, packet);
-                }
             }
             catch (Exception ex)
             {
-                AppendLog($"[Pipeline Error] {ex.Message}", Brushes.Red);
+                AppendLog($"[Pipeline Error] {ex}", Brushes.Red);
+            }
+        }
+
+        public List<InterceptorItem> GetInterceptors(bool isReplay) => isReplay ? ReplayInterceptorSelector.GetActiveInterceptors() : ClientInterceptorSelector.GetActiveInterceptors();
+
+        private async Task InterceptorCall(PacketContext ctx, IEnumerable<InterceptorItem> interceptors)
+        {
+            foreach (var interceptorItem in interceptors)
+            {
+                try
+                {
+                    var interceptor = (IPacketInterceptor)Activator.CreateInstance(interceptorItem.Type)!;
+
+                    if (ctx.Direction == PacketDirection.Outbound)
+                        await interceptor.OnOutboundAsync(ctx);
+                    else
+                        await interceptor.OnInboundAsync(ctx);
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex;
+                    while (inner.InnerException != null)
+                        inner = inner.InnerException;
+                    AppendLog($"[Interceptor {interceptorItem.Name}] {inner.GetType().Name}: {inner.Message}", Brushes.Red);
+                    AppendLog($"  StackTrace: {inner.StackTrace}", Brushes.OrangeRed);
+                }
             }
         }
 
@@ -271,17 +277,13 @@ namespace ProtoTestTool
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e) => _ = MainWindow_LoadedAsync();
 
-        private async Task MainWindow_LoadedAsync()
+        private Task MainWindow_LoadedAsync()
         {
             try
             {
-                // Fallback: show workspace dialog if not set
                 if (string.IsNullOrEmpty(_workspacePath))
-                {
                     ShowWorkspaceDialog();
-                }
 
-                // Resolution-Aware Resizing
                 var screenWidth = SystemParameters.PrimaryScreenWidth;
                 var screenHeight = SystemParameters.PrimaryScreenHeight;
 
@@ -292,102 +294,115 @@ namespace ProtoTestTool
                     this.Left = (screenWidth - this.Width) / 2;
                     this.Top = (screenHeight - this.Height) / 2;
                 }
-
-                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 FluentMessageBox.ShowError($"Editor Init Failed: {ex.Message}");
             }
+
+            return Task.CompletedTask;
         }
 
         private WorkspaceConfig? _currentConfig;
 
         private void LoadWorkspaceConfiguration(string workspacePath)
         {
-             try
-             {
-                 _currentConfig = WorkspaceConfig.Load(workspacePath);
-                 
-                 // Apply Config to UI
-                 IpBox.Text = _currentConfig.TargetIp;
-                 if (PortBox != null) PortBox.Text = _currentConfig.TargetPort.ToString();
-                 if (ProxyLocalPortBox != null) ProxyLocalPortBox.Text = _currentConfig.ProxyLocalPort.ToString();
-                 if (ProxyTargetIpBox != null) ProxyTargetIpBox.Text = _currentConfig.ProxyTargetIp;
-                 if (ProxyTargetPortBox != null) ProxyTargetPortBox.Text = _currentConfig.ProxyTargetPort.ToString();
+            try
+            {
+                _currentConfig = WorkspaceConfig.Load(workspacePath);
 
-                 var protoPath = _currentConfig.ProtoFolderPath;
+                // Apply Config to UI
+                IpBox.Text = _currentConfig.TargetIp;
+                if (PortBox != null) PortBox.Text = _currentConfig.TargetPort.ToString();
+                if (ProxyLocalPortBox != null) ProxyLocalPortBox.Text = _currentConfig.ProxyLocalPort.ToString();
+                if (ProxyTargetIpBox != null) ProxyTargetIpBox.Text = _currentConfig.ProxyTargetIp;
+                if (ProxyTargetPortBox != null) ProxyTargetPortBox.Text = _currentConfig.ProxyTargetPort.ToString();
 
-                 // Auto-discovery if config is empty
-                 if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
-                 {
-                     try
-                     {
-                         if (Directory.GetFiles(workspacePath, "*.proto", SearchOption.AllDirectories).Length > 0)
-                         {
-                             protoPath = workspacePath;
-                             _currentConfig.ProtoFolderPath = protoPath; // Update config in memory
-                         }
-                     }
-                     catch { }
-                 }
+                var protoPath = _currentConfig.ProtoFolderPath;
 
-                 _protoFolderPath = protoPath ?? "";
+                // Auto-discovery if config is empty
+                if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
+                {
+                    try
+                    {
+                        if (Directory.GetFiles(workspacePath, "*.proto", SearchOption.AllDirectories).Length > 0)
+                        {
+                            protoPath = workspacePath;
+                            _currentConfig.ProtoFolderPath = protoPath; // Update config in memory
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
 
-                 // Trigger Async Initialization Sequence
-                 _ = InitializeWorkspaceSequenceAsync(workspacePath, _protoFolderPath);
-             }
-             catch (Exception ex)
-             {
-                 AppendLog($"[Config] Error loading config: {ex.Message}", Brushes.Orange);
-             }
+                _protoFolderPath = protoPath ?? "";
+
+                // Trigger Async Initialization Sequence
+                _ = InitializeWorkspaceSequenceAsync(workspacePath, _protoFolderPath);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Config] Error loading config: {ex.Message}", Brushes.Orange);
+            }
         }
 
         private async Task InitializeWorkspaceSequenceAsync(string workspacePath, string protoPath)
         {
-             try 
-             {
-                 if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
-                 {
-                     await LoadProtosFromFolderAsync(protoPath);
-                 }
-                 
-                 Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
-                 await CompileScriptsAsync(workspacePath, (msg, brush) => Dispatcher.Invoke(() => AppendLog(msg, brush)));
-             }
-             catch (Exception ex)
-             {
-                 Dispatcher.Invoke(() => AppendLog($"[Init] Error: {ex.Message}", Brushes.Red));
-             }
-             finally
-             {
-                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
-             }
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
+                {
+                    await LoadProtosFromFolderAsync(protoPath);
+                }
+
+                Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
+                await CompileScriptsAsync(workspacePath, (msg, brush) => Dispatcher.Invoke(() => AppendLog(msg, brush)));
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => AppendLog($"[Init] Error: {ex.Message}", Brushes.Red));
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
+            }
         }
 
         private void SaveWorkspaceConfiguration()
         {
-             if (string.IsNullOrEmpty(_workspacePath)) return;
-             if (_currentConfig == null) _currentConfig = new WorkspaceConfig();
+            if (string.IsNullOrEmpty(_workspacePath)) 
+                return;
+            
+            if (_currentConfig == null) 
+                _currentConfig = new WorkspaceConfig();
 
-             if (IpBox != null) _currentConfig.TargetIp = IpBox.Text;
-             if (PortBox != null && int.TryParse(PortBox.Text, out var port)) _currentConfig.TargetPort = port;
-             
-             if (ProxyLocalPortBox != null && int.TryParse(ProxyLocalPortBox.Text, out var pPort)) _currentConfig.ProxyLocalPort = pPort;
-             if (ProxyTargetIpBox != null) _currentConfig.ProxyTargetIp = ProxyTargetIpBox.Text;
-             if (ProxyTargetPortBox != null && int.TryParse(ProxyTargetPortBox.Text, out var ptPort)) _currentConfig.ProxyTargetPort = ptPort;
+            if (IpBox != null) 
+                _currentConfig.TargetIp = IpBox.Text;
+            
+            if (PortBox != null && int.TryParse(PortBox.Text, out var port)) 
+                _currentConfig.TargetPort = port;
 
-             // Save Active Interceptors
-             if (ClientInterceptorSelector != null)
-                _currentConfig.ActiveInterceptors["Client"] = ClientInterceptorSelector.GetActiveInterceptors();
-             
-             if (ProxyInterceptorSelector != null)
-                _currentConfig.ActiveInterceptors["Proxy"] = ProxyInterceptorSelector.GetActiveInterceptors();
-             
-             if (ReplayInterceptorSelector != null)
-                _currentConfig.ActiveInterceptors["Replay"] = ReplayInterceptorSelector.GetActiveInterceptors();
+            if (ProxyLocalPortBox != null && int.TryParse(ProxyLocalPortBox.Text, out var pPort)) 
+                _currentConfig.ProxyLocalPort = pPort;
+            
+            if (ProxyTargetIpBox != null) 
+                _currentConfig.ProxyTargetIp = ProxyTargetIpBox.Text;
+            
+            if (ProxyTargetPortBox != null && int.TryParse(ProxyTargetPortBox.Text, out var ptPort)) 
+                _currentConfig.ProxyTargetPort = ptPort;
 
-             _currentConfig.Save(_workspacePath);
+            // Save Active Interceptors
+            if (ClientInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Client"] = ClientInterceptorSelector.GetActiveInterceptorNames();
+
+            if (ProxyInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Proxy"] = ProxyInterceptorSelector.GetActiveInterceptorNames();
+
+            if (ReplayInterceptorSelector != null)
+                _currentConfig.ActiveInterceptors["Replay"] = ReplayInterceptorSelector.GetActiveInterceptorNames();
+
+            _currentConfig.Save(_workspacePath);
         }
 
         #region Workspace Management
@@ -406,7 +421,7 @@ namespace ProtoTestTool
 
             if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
             {
-                var app = (App)Application.Current;
+                var app = (App) Application.Current;
                 if (!string.Equals(dialog.SelectedPath, _workspacePath, StringComparison.OrdinalIgnoreCase) &&
                     !app.TryAcquireWorkspaceLock(dialog.SelectedPath))
                 {
@@ -445,8 +460,14 @@ namespace ProtoTestTool
 
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
-            SaveWorkspaceSettings(); // Global Recent List
-            SaveWorkspaceConfiguration(); // Current Workspace Config
+            SaveWorkspaceSettings();
+            SaveWorkspaceConfiguration();
+
+            if (ScriptGlobals.State is ScriptStateStore store)
+            {
+                try { store.FlushToPersistent(); }
+                catch (Exception ex) { Debug.WriteLine($"[StateStore] Flush on close failed: {ex.Message}"); }
+            }
         }
 
         private void LoadWorkspaceSettings()
@@ -476,11 +497,9 @@ namespace ProtoTestTool
         }
 
 
-
-
-
         // Field to track current proto folder
         private string _protoFolderPath = "";
+        private AppState State { get; set; } = AppState.None;
 
         private async Task LoadProtosFromFolderAsync(string folder)
         {
@@ -547,12 +566,14 @@ namespace ProtoTestTool
         {
             ClientView.Visibility = Visibility.Visible;
             ProxyView.Visibility = Visibility.Collapsed;
+            StatusModeText.Text = "Test Client";
         }
 
         private void ModeProxy_Click(object sender, RoutedEventArgs e)
         {
             ClientView.Visibility = Visibility.Collapsed;
             ProxyView.Visibility = Visibility.Visible;
+            StatusModeText.Text = "Proxy";
         }
 
         private void ResetState_Click(object sender, RoutedEventArgs e)
@@ -574,7 +595,6 @@ namespace ProtoTestTool
         #endregion
 
         #region Network Connection
-
 
         private void ClientRecordBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -600,7 +620,7 @@ namespace ProtoTestTool
                 else
                 {
                     // Fallback if structure changes
-                    btn.Content = text; 
+                    btn.Content = text;
                 }
             }
 
@@ -612,6 +632,7 @@ namespace ProtoTestTool
                     btn.IsChecked = false;
                     return;
                 }
+
                 recorder.Start(_workspacePath);
                 UpdateButtonText("STOP");
                 btn.Foreground = Brushes.Red;
@@ -625,7 +646,6 @@ namespace ProtoTestTool
                 AppendLog($"[{recorderName}] Stopped recording.", Brushes.Gray);
             }
         }
-
 
 
         private void UpdateConnectionState(bool connected)
@@ -651,8 +671,6 @@ namespace ProtoTestTool
 
         #region Sending & Receiving
 
-
-
         private async Task LoadHeaderJsonAsync()
         {
             if (_scriptAssembly == null)
@@ -666,14 +684,14 @@ namespace ProtoTestTool
 
             if (headerType != null)
             {
-                 // Default empty header
-                 var dummy = Activator.CreateInstance(headerType);
-                 var json = JsonConvert.SerializeObject(dummy, Formatting.Indented);
-                 await HeaderJsonEditorView.SetTextAsync(json);
+                // Default empty header
+                var dummy = Activator.CreateInstance(headerType);
+                var json = JsonConvert.SerializeObject(dummy, Formatting.Indented);
+                await HeaderJsonEditorView.SetTextAsync(json);
             }
             else
             {
-                 await HeaderJsonEditorView.SetTextAsync("{}");
+                await HeaderJsonEditorView.SetTextAsync("{}");
             }
         }
 
@@ -727,7 +745,6 @@ namespace ProtoTestTool
         }
 
 
-
         public void SendPacket(IHeader header, IMessage message)
         {
             _ = SendPacketPipelineAsync(message, header, isReplay: false);
@@ -738,68 +755,53 @@ namespace ProtoTestTool
         {
             _ = Dispatcher.InvokeAsync(async () =>
             {
-                _receiveBuffer.AddRange(data);
+                _receiveBuffer.Append(data);
                 await ProcessReceiveBuffer();
             });
         }
 
         private async Task ProcessReceiveBuffer()
         {
-            Debug.Assert( ScriptGlobals.Codec != null );
+            var codec = ScriptGlobals.Codec;
+            if (codec == null) return;
 
-            // Inefficient List -> Array -> ROS loop for prototype
-            while (_receiveBuffer.Count > 0)
+            while (_receiveBuffer.Length > 0)
             {
-                var currentBytes = _receiveBuffer.ToArray();
-                ReadOnlySpan<byte> span = currentBytes.AsSpan();
-
                 try
                 {
-                    var readSize = ScriptGlobals.Codec.TryDecode(ref span, out var packet);
-                    if (readSize > 0)
+                    var span = _receiveBuffer.WrittenSpan;
+                    var readSize = codec.TryDecode(ref span, out var packet);
+                    if (readSize <= 0)
+                        break;
+
+                    Debug.Assert(packet != null);
+                    _receiveBuffer.Consume(readSize);
+
+                    if (PacketRecorder.Client.IsRecording)
+                        PacketRecorder.Client.Record(PacketDirection.Inbound, packet);
+
+                    var interceptors = GetInterceptors(State == AppState.Replay);
+                    await InterceptorCall(new PacketContext(packet, PacketDirection.Inbound), interceptors);
+
+                    var jsonBody = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
+                    var header = packet.Header.ToJsonString();
+
+                    AppendLog($"[Recv] {packet.Message.GetType().Name} ({readSize} bytes)", Brushes.LimeGreen);
+
+                    var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(header);
+                    _responseHeaders.Clear();
+
+                    if (dict != null)
                     {
-                        if (PacketRecorder.Client.IsRecording && packet != null)
-                        {
-                            PacketRecorder.Client.Record(PacketDirection.Inbound, packet);
-                        }
-
-                        _receiveBuffer.RemoveRange(0, (int) readSize);
-
-                        if (packet != null)
-                        {
-                            var jsonBody = JsonConvert.SerializeObject(packet.Message, Formatting.Indented);
-                            var header = packet.Header.ToJsonString();
-                            AppendLog($"[Recv] {packet.Message.GetType().Name} ({readSize} bytes)", Brushes.LimeGreen);
-                            // Update Response Inspector (Headers)
-                            try
-                            {
-                                var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(header);
-                                _responseHeaders.Clear();
-                                if (dict != null)
-                                {
-                                    foreach (var kvp in dict)
-                                    {
-                                        _responseHeaders.Add(new KeyValueItem {Key = kvp.Key, Value = kvp.Value?.ToString() ?? ""});
-                                    }
-                                }
-                            }
-                            catch
-                            {
-                            }
-
-                            // Update Response Inspector (Body)
-                            await ResponseBoxView.SetTextAsync(jsonBody);
-                        }
+                        foreach (var kvp in dict)
+                            _responseHeaders.Add(new KeyValueItem { Key = kvp.Key, Value = kvp.Value?.ToString() ?? "" });
                     }
-                    else
-                    {
-                        break; // Need more data
-                    }
+
+                    await ResponseBoxView.SetTextAsync(jsonBody);
                 }
                 catch (Exception ex)
                 {
                     AppendLog($"Decoder Error: {ex.Message}", Brushes.Red);
-                    // Prevent infinite loop on bad data
                     _receiveBuffer.Clear();
                     break;
                 }
@@ -854,6 +856,7 @@ namespace ProtoTestTool
                     _scriptEditorWindow.WindowState = WindowState.Normal;
             }
         }
+
         private async void LoadRecordingBtn_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFileDialog
@@ -868,8 +871,7 @@ namespace ProtoTestTool
                 {
                     // Delegated to ReplayService
                     var packets = await _replayService.LoadRecordingAsync(dialog.FileName);
-                    
-                    if (packets != null)
+                    if (packets.Count > 0)
                     {
                         _loadedPackets = new ObservableCollection<RecordedPacket>(packets);
                         ReplayPacketGrid.ItemsSource = _loadedPackets;
@@ -886,50 +888,60 @@ namespace ProtoTestTool
 
         private async void ReplayAllBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_loadedPackets == null || _loadedPackets.Count == 0)
+            if (_loadedPackets.Count == 0)
             {
                 MessageBox.Show("No packets loaded.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
 
-
-            if (_networkService == null || !_networkService.IsConnected)
+            if (!_networkService.IsConnected)
             {
-                 MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                 return;
+                MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
             }
 
+            State = AppState.Replay;
+
             // Delegate to ReplayService
-            await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) => 
+            await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) =>
             {
-                 // Resolve Dynamic Header Type from ScriptAssembly
-                 Type? headerType = null;
-                 if (_scriptAssembly != null)
-                 {
-                     headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                     if (headerType == null) headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
-                 }
+                // Resolve Dynamic Header Type from ScriptAssembly
+                Type? headerType = null;
+                if (_scriptAssembly != null)
+                {
+                    headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                }
 
-                 IHeader? header = null;
-                 // Header Conversion (JsonElement -> Dynamic Header Type)
-                 if (headerType != null && headerObj is System.Text.Json.JsonElement je)
-                 {
-                     try 
-                     {
-                         header = (IHeader?)JsonConvert.DeserializeObject(je.GetRawText(), headerType);
-                     }
-                     catch { /* Header parse fail */ }
-                 }
-                 
-                 if (header == null)
-                      return;
+                IHeader? header = null;
+                // Header Conversion (JsonElement -> Dynamic Header Type)
+                if (headerType != null && headerObj is System.Text.Json.JsonElement je)
+                {
+                    try
+                    {
+                        header = (IHeader?) JsonConvert.DeserializeObject(je.GetRawText(), headerType);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[Replay] Header parse failed: {ex.Message}");
+                    }
+                }
 
-                 await SendPacketPipelineAsync(msg, header, isReplay: true);
+                if (header == null)
+                    return;
 
+                await SendPacketPipelineAsync(msg, header, isReplay: true);
             }, AppendLog);
-            
+
+            State = AppState.None;
+
             AppendLog("Replay Finished.", Brushes.Green);
+        }
+
+        public enum AppState
+        {
+            None,
+            Replay,
         }
 
         private async void ReplayPacketGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -943,26 +955,26 @@ namespace ProtoTestTool
                 // 1. Display Full Packet Details (Body Tab)
                 if (packet != null)
                 {
-                    try 
+                    try
                     {
                         // Use System.Text.Json to correctly handle JsonElement
-                        var options = new System.Text.Json.JsonSerializerOptions 
-                        { 
+                        var options = new System.Text.Json.JsonSerializerOptions
+                        {
                             WriteIndented = true,
                             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                         };
                         var content = System.Text.Json.JsonSerializer.Serialize(packet, options);
-                        
+
                         await ReplayBodyJsonViewer.SetTextAsync(content);
                     }
                     catch (Exception ex)
                     {
-                         await ReplayBodyJsonViewer.SetTextAsync($"// Error: {ex.Message}");
+                        await ReplayBodyJsonViewer.SetTextAsync($"// Error: {ex.Message}");
                     }
                 }
                 else
                 {
-                     await ReplayBodyJsonViewer.SetTextAsync("");
+                    await ReplayBodyJsonViewer.SetTextAsync("");
                 }
 
                 // 2. Display Header
@@ -970,8 +982,8 @@ namespace ProtoTestTool
                 {
                     try
                     {
-                        var headerJson = System.Text.Json.JsonSerializer.Serialize(packet.Header, new System.Text.Json.JsonSerializerOptions 
-                        { 
+                        var headerJson = System.Text.Json.JsonSerializer.Serialize(packet.Header, new System.Text.Json.JsonSerializerOptions
+                        {
                             WriteIndented = true,
                             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                         });
@@ -984,11 +996,9 @@ namespace ProtoTestTool
                 }
                 else
                 {
-                     await ReplayHeaderJsonViewer.SetTextAsync("");
+                    await ReplayHeaderJsonViewer.SetTextAsync("");
                 }
             }
         }
-
-
     }
 }

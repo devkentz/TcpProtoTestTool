@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using System.Collections.ObjectModel;
+using ProtoTestTool.Controls;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
 using ProtoTestTool.Services;
@@ -15,10 +16,6 @@ namespace ProtoTestTool
         private ProxyServer? _proxyServer;
         private ProxyInterceptorPipeline? _proxyPipeline; // Hot Reload Support
         private IScriptStateStore? _scriptState;
-        
-        // _currentConfig is managed in MainWindow.xaml.cs part
-
-
 
         private static readonly Regex GeneratedDllPattern = new(@".+\.[a-fA-F0-9]{8}\.dll$", RegexOptions.Compiled);
 
@@ -62,7 +59,14 @@ namespace ProtoTestTool
                 var outputDll = Path.Combine(workspacePath, "Script.dll");
                 if (File.Exists(outputDll))
                 {
-                    try { File.Delete(outputDll); } catch { }
+                    try
+                    {
+                        File.Delete(outputDll);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ScriptLoader] Failed to delete old DLL: {ex.Message}");
+                    }
                 }
 
                 var refs = CollectReferences(workspacePath, scriptsDir);
@@ -76,7 +80,7 @@ namespace ProtoTestTool
                 logAction("Compilation Success! Loading Assembly...", Brushes.DeepSkyBlue);
 
                 var assembly = LoadAssemblies(workspacePath, outputDll);
-                
+
 
                 var registryType = assembly.GetTypes()
                     .FirstOrDefault(t => typeof(IPacketRegistry).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
@@ -84,7 +88,7 @@ namespace ProtoTestTool
                 IPacketRegistry registry;
                 if (registryType != null)
                 {
-                    registry = (IPacketRegistry)Activator.CreateInstance(registryType)!;
+                    registry = (IPacketRegistry) Activator.CreateInstance(registryType)!;
                     logAction($"[Registry] Using script-defined {registryType.Name}", Brushes.DeepSkyBlue);
                 }
                 else
@@ -92,10 +96,12 @@ namespace ProtoTestTool
                     registry = ProtoLoaderManager.Instance;
                 }
 
-                var codecType = assembly.GetTypes()
-                    .FirstOrDefault(t => typeof(IPacketCodec).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                if (codecType == null) throw new Exception("IPacketCodec implementation not found in scripts.");
-                var codec = (IPacketCodec)Activator.CreateInstance(codecType)!;
+                var codecType = assembly.GetTypes().FirstOrDefault(t => typeof(IPacketCodec).IsAssignableFrom(t) && t is {IsAbstract: false, IsInterface: false});
+                
+                if (codecType == null) 
+                    throw new Exception("IPacketCodec implementation not found in scripts.");
+                
+                var codec = (IPacketCodec) Activator.CreateInstance(codecType)!;
 
                 InitializeScriptGlobals(registry, codec);
                 UpdateInterceptors(assembly, logAction);
@@ -104,11 +110,10 @@ namespace ProtoTestTool
                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
 
                 UpdateIntellisense(assembly, logAction);
-
             }
             catch (Exception ex)
             {
-                logAction($"Error:\n{ex.Message}", Brushes.Red);
+                logAction($"Error:\n{ex}", Brushes.Red);
             }
         }
 
@@ -200,8 +205,8 @@ namespace ProtoTestTool
         {
             var interceptorTypes = assembly.GetTypes()
                 .Where(t => typeof(IPacketInterceptor).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
-                .Select(t => t.Name)
-                .OrderBy(n => n)
+                .Select(t => new InterceptorItem(t.Name, t))
+                .OrderBy(n => n.Name)
                 .ToList();
 
             Dispatcher.Invoke(() =>
@@ -209,11 +214,11 @@ namespace ProtoTestTool
                 var config = _currentConfig ?? new WorkspaceConfig();
 
                 // Helper to setup selector
-                void SetupSelector(ProtoTestTool.Controls.InterceptorSelector selector, string key)
+                void SetupSelector(InterceptorSelector selector, string key)
                 {
-                    var active = config.ActiveInterceptors.TryGetValue(key, out var list) ? list : new List<string>();
+                    var active = config.ActiveInterceptors.GetValueOrDefault(key, []);
                     selector.SetInterceptors(interceptorTypes, active);
-                    
+
                     // Hook event to save on change
                     selector.SelectionChanged -= Selector_SelectionChanged;
                     selector.SelectionChanged += Selector_SelectionChanged;
@@ -229,7 +234,7 @@ namespace ProtoTestTool
 
         private void Selector_SelectionChanged(object sender, RoutedEventArgs e)
         {
-             SaveWorkspaceConfiguration();
+            SaveWorkspaceConfiguration();
         }
 
         private void UpdateIntellisense(Assembly assembly, Action<string, Brush> logAction)
@@ -267,35 +272,26 @@ namespace ProtoTestTool
                 try
                 {
                     var assembly = _scriptAssembly;
-                    if (assembly == null) throw new Exception("Script assembly not loaded.");
+                    if (assembly == null) 
+                        throw new Exception("Script assembly not loaded.");
 
                     // 1. Get Codec from Globals
-                    if (ScriptGlobals.Codec == null) throw new Exception("IPacketCodec이 초기화되지 않았습니다. (Compile First)");
+                    if (ScriptGlobals.Codec == null) 
+                        throw new Exception("IPacketCodec이 초기화되지 않았습니다. (Compile First)");
+                    
                     var codec = ScriptGlobals.Codec;
 
                     // 2. Find Interceptors
                     _proxyPipeline = new ProxyInterceptorPipeline(); // Assign to field
-                    
-                    // Get Active Interceptors from UI (Dispatcher)
-                    List<string> activeInterceptorNames = new();
-                    Dispatcher.Invoke(() => 
-                    {
-                        activeInterceptorNames = ProxyInterceptorSelector.GetActiveInterceptors();
-                    });
 
-                    foreach (var name in activeInterceptorNames)
+                    // Get Active Interceptors from UI (Dispatcher)
+                    List<InterceptorItem> activeInterceptorNames = new();
+                    Dispatcher.Invoke(() => { activeInterceptorNames = ProxyInterceptorSelector.GetActiveInterceptors(); });
+
+                    foreach (var interceptorItem in activeInterceptorNames)
                     {
-                        var type = assembly.GetTypes().FirstOrDefault(t => t.Name == name);
-                        if (type != null)
-                        {
-                            // Unified IPacketInterceptor
-                            var interceptor = (IPacketInterceptor)Activator.CreateInstance(type)!;
-                            // Adapt to Proxy Pipeline (we need to potentially wrap or update pipeline to accept IPacketInterceptor)
-                            // or casting if pipeline supports it.
-                            // Assuming _proxyPipeline expects IProxyPacketInterceptor... we need to update ProxyPipeline too!
-                            // For now, let's assume ProxyInterceptorPipeline is updated to IPacketInterceptor.
-                             _proxyPipeline.Add(interceptor);
-                        }
+                        var interceptor = (IPacketInterceptor) Activator.CreateInstance(interceptorItem.Type)!;
+                        _proxyPipeline.Add(interceptor);
                     }
 
                     // 3. Create Server
@@ -335,7 +331,7 @@ namespace ProtoTestTool
             }
         }
 
-        
+
         private void CreateIfMissing(string dir, string fileName, string templateName)
         {
             var path = Path.Combine(dir, fileName);
@@ -354,7 +350,6 @@ namespace ProtoTestTool
         }
 
 
-
         #region Proto Manager
 
         private readonly ObservableCollection<string> _loadedProtoFiles = new ObservableCollection<string>();
@@ -362,12 +357,13 @@ namespace ProtoTestTool
         // but here we can track what we just imported.
 
         private void ReloadProtoBtn_Click(object sender, RoutedEventArgs e) => _ = ReloadProtoBtn_ClickAsync();
+
         private async Task ReloadProtoBtn_ClickAsync()
         {
             try
             {
-                 var protoDir = !string.IsNullOrEmpty(_workspacePath) 
-                    ? Path.Combine(_workspacePath, "Protos") 
+                var protoDir = !string.IsNullOrEmpty(_workspacePath)
+                    ? Path.Combine(_workspacePath, "Protos")
                     : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Protos");
 
                 if (!Directory.Exists(protoDir))
@@ -408,7 +404,7 @@ namespace ProtoTestTool
                     : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Protos", "ProtoGen");
 
                 // Stop active connections effectively to release assembly references
-                if (_networkService != null && _networkService.IsConnected)
+                if (_networkService.IsConnected)
                 {
                     _networkService.Disconnect();
                     AppendLog("[Manager] Client disconnected for reload.", Brushes.Yellow);
@@ -431,7 +427,17 @@ namespace ProtoTestTool
 
                 // Clean old CS files to avoid duplicates/stale files
                 var oldCs = Directory.GetFiles(targetDir, "*.cs");
-                foreach (var f in oldCs) { try { File.Delete(f); } catch { } }
+                foreach (var f in oldCs)
+                {
+                    try
+                    {
+                        File.Delete(f);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete {Path.GetFileName(f)}: {ex.Message}");
+                    }
+                }
 
                 // Track loaded files
                 _loadedProtoFiles.Clear();
@@ -480,8 +486,14 @@ namespace ProtoTestTool
                     // Delete old DLL if exists
                     if (File.Exists(outputDll))
                     {
-                        try { File.Delete(outputDll); }
-                        catch { /* May be locked, will overwrite */ }
+                        try
+                        {
+                            File.Delete(outputDll);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete old Protos.dll: {ex.Message}");
+                        }
                     }
 
                     // Compile all CS files directly to Protos.dll
@@ -558,6 +570,7 @@ namespace ProtoTestTool
         #endregion
 
         private void ProxyStartBtn_Click(object sender, RoutedEventArgs e) => _ = ProxyStartBtn_ClickAsync();
+
         private async Task ProxyStartBtn_ClickAsync()
         {
             if (_proxyServer != null && _proxyServer.IsStarted)
@@ -566,7 +579,7 @@ namespace ProtoTestTool
                 _proxyServer.Stop();
                 _proxyServer.Dispose();
                 _proxyServer = null;
-                
+
                 ProxyStartBtn.Content = "프록시 시작 (Start Proxy)";
                 AppendProxyLog("Proxy Stopped.");
                 return;

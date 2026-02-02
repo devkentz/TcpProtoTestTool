@@ -14,12 +14,7 @@ namespace ProtoTestTool.ScriptContract
         /// <summary>
         /// The decoded message object (if available).
         /// </summary>
-        public Packet? Packet { get; set; }
-
-        /// <summary>
-        /// The raw message object (for Client Send scenario).
-        /// </summary>
-        public IMessage? Message { get; set; }
+        public Packet Packet { get; }
 
         /// <summary>
         /// Key-Value metadata/headers.
@@ -56,10 +51,10 @@ namespace ProtoTestTool.ScriptContract
         }
 
         // Constructor for Client Send
-        public PacketContext(IMessage message)
+        public PacketContext(Packet packet, PacketDirection direction)
         {
-            Message = message;
-            Direction = PacketDirection.Outbound;
+            Packet = packet;
+            Direction = direction;
         }
     }
 }

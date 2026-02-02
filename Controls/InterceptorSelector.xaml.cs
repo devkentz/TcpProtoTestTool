@@ -1,11 +1,16 @@
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows;
-using System.Windows.Controls;
 
 namespace ProtoTestTool.Controls
 {
-    public partial class InterceptorSelector : UserControl
+    public class InterceptorItem(string name, Type type)
+    {
+        public string Name { get; set; } = name;
+        public bool IsActive { get; set; } = false;
+
+        public Type Type { get; set; } = type;
+    }
+
+    public partial class InterceptorSelector
     {
         public event RoutedEventHandler? SelectionChanged;
 
@@ -14,35 +19,38 @@ namespace ProtoTestTool.Controls
             InitializeComponent();
         }
 
-        public void SetInterceptors(IEnumerable<string> allInterceptors, IEnumerable<string> activeInterceptors)
+        public void SetInterceptors(List<InterceptorItem> allInterceptors, List<string> activeInterceptors)
         {
-            var items = allInterceptors.Select(name => new InterceptorItem 
-            { 
-                Name = name, 
-                IsActive = activeInterceptors.Contains(name) 
-            }).ToList();
-
-            InterceptorList.ItemsSource = items;
+            foreach (var item in allInterceptors) 
+                item.IsActive = activeInterceptors.Contains(item.Name);
+            
+            InterceptorList.ItemsSource = allInterceptors;
         }
 
-        public List<string> GetActiveInterceptors()
+        public List<InterceptorItem> GetActiveInterceptors()
         {
             if (InterceptorList.ItemsSource is IEnumerable<InterceptorItem> items)
             {
-                return items.Where(i => i.IsActive).Select(i => i.Name).ToList();
+                return items.Where(i => i.IsActive).ToList();
             }
-            return new List<string>();
+
+            return new List<InterceptorItem>();
+        }
+
+
+        public List<string> GetActiveInterceptorNames()
+        {
+            if (InterceptorList.ItemsSource is IEnumerable<InterceptorItem> items)
+            {
+                return items.Where(i => i.IsActive).Select(e => e.Name).ToList();
+            }
+
+            return [];
         }
 
         private void OnCheckChanged(object sender, RoutedEventArgs e)
         {
             SelectionChanged?.Invoke(this, e);
-        }
-
-        public class InterceptorItem
-        {
-            public string Name { get; set; } = "";
-            public bool IsActive { get; set; }
         }
     }
 }

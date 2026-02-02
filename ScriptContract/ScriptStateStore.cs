@@ -135,6 +135,19 @@ namespace ProtoTestTool.ScriptContract
         public void Clear()
         {
             _memoryStore.Clear();
+
+            try
+            {
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                var command = connection.CreateCommand();
+                command.CommandText = "DELETE FROM KeyValueStore";
+                command.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ScriptStateStore] DB Clear Failed: {ex.Message}");
+            }
         }
 
         public void FlushToPersistent()

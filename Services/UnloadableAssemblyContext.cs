@@ -25,9 +25,17 @@ namespace ProtoTestTool.Services
         /// </summary>
         public Assembly LoadFromFile(string path)
         {
-            // Read file into memory to avoid file locking
             var bytes = File.ReadAllBytes(path);
             using var stream = new MemoryStream(bytes);
+
+            var pdbPath = Path.ChangeExtension(path, ".pdb");
+            if (File.Exists(pdbPath))
+            {
+                var pdbBytes = File.ReadAllBytes(pdbPath);
+                using var pdbStream = new MemoryStream(pdbBytes);
+                return LoadFromStream(stream, pdbStream);
+            }
+
             return LoadFromStream(stream);
         }
     }

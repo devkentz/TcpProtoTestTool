@@ -7,7 +7,7 @@ namespace ProtoTestTool.Services
     public class NetworkService : INetworkService
     {
         private SimpleTcpClient? _client;
-        
+
         public event Action? Connected;
         public event Action? Disconnected;
         public event Action<string>? ErrorOccurred;
@@ -17,21 +17,18 @@ namespace ProtoTestTool.Services
 
         public async Task ConnectAsync(string ip, int port)
         {
-            Disconnect(); // Ensure previous connection is closed
+            Disconnect();
 
             _client = new SimpleTcpClient(ip, port);
-            
-            // Forward events
+
             _client.Connected += () => Connected?.Invoke();
             _client.Disconnected += () => Disconnected?.Invoke();
             _client.ErrorOccurred += (err) => ErrorOccurred?.Invoke(err.ToString());
             _client.DataReceived += (bytes) => DataReceived?.Invoke(bytes);
 
-            // SimpleTcpClient.ConnectAsync is theoretically async but current impl might be fire-and-forget or instant.
-            // Adjust based on actual SimpleTcpClient implementation.
-            _client.ConnectAsync();
-            
-            await Task.CompletedTask;
+            var connected = await _client.ConnectWithResultAsync();
+            if (!connected)
+                throw new InvalidOperationException($"Failed to connect to {ip}:{port}");
         }
 
         public void Disconnect()
@@ -43,15 +40,13 @@ namespace ProtoTestTool.Services
             }
         }
 
-        public async Task SendAsync(ReadOnlyMemory<byte> data)
+        public Task SendAsync(ReadOnlyMemory<byte> data)
         {
-            if (_client == null || !_client.IsConnected) return; // Or throw
+            if (_client == null || !_client.IsConnected)
+                throw new InvalidOperationException("Not connected");
 
-            // SimpleTcpClient.SendAsync takes Span, but we can't await void or non-Task.
-            // Assuming SimpleTcpClient.SendAsync is void or fire-and-forget.
             _client.SendAsync(data.Span);
-            
-            await Task.CompletedTask;
+            return Task.CompletedTask;
         }
     }
 }

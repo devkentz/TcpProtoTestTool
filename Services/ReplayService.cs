@@ -1,6 +1,6 @@
 using System.IO;
 using System.Text.Json;
-using System.Windows.Media; // For Brush
+using System.Windows.Media;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using ProtoTestTool.Network;
@@ -11,61 +11,58 @@ namespace ProtoTestTool.Services
     {
         public async Task<List<RecordedPacket>> LoadRecordingAsync(string filePath)
         {
-            if (!File.Exists(filePath)) 
+            if (!File.Exists(filePath))
                 throw new FileNotFoundException("Recording file not found", filePath);
 
             var json = await File.ReadAllTextAsync(filePath);
-            var packets = JsonSerializer.Deserialize<List<RecordedPacket>>(json, new JsonSerializerOptions 
-            { 
-                 PropertyNameCaseInsensitive = true 
+            var packets = JsonSerializer.Deserialize<List<RecordedPacket>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
             });
 
-            return packets ?? new List<RecordedPacket>();
+            return packets ?? [];
         }
 
         public async Task ReplayAllAsync(List<RecordedPacket> packets, Func<IMessage, object?, Task> sendCallback, Action<string, Brush> logger)
         {
-            if (packets.Count == 0) 
+            if (packets.Count == 0)
                 return;
+
+            // Build FullName → (PacketConvertor, MessageDescriptor) lookup once
+            var lookup = new Dictionary<string, (PacketConvertor Convertor, MessageDescriptor Descriptor)>();
+            foreach (var p in ProtoLoaderManager.Instance.PacketsByName.Values)
+            {
+                var desc = p.Type
+                    .GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                    ?.GetValue(null) as MessageDescriptor;
+
+                if (desc != null)
+                    lookup[desc.FullName] = (p, desc);
+            }
 
             foreach (var record in packets)
             {
-                // Only replay Outbound
                 if (record.Direction != "Outbound") continue;
 
-                // Resolve Type
-                var packetConvertor = ProtoLoaderManager.Instance.PacketsByName.Values
-                    .FirstOrDefault(p => 
-                    {
-                        var desc = p.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
-                        return desc != null && desc.FullName == record.PacketName;
-                    });
-
-                if (packetConvertor?.Type == null)
+                if (!lookup.TryGetValue(record.PacketName, out var entry))
                 {
                     logger?.Invoke($"[Replay Skip] Unknown Type: {record.PacketName}", Brushes.Yellow);
                     continue;
                 }
-                
-                var msgDescriptor = packetConvertor.Type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null) as MessageDescriptor;
-                if (msgDescriptor == null) continue;
 
-                // Deserialization
                 IMessage? protoMsg = null;
                 try
                 {
+                    var parser = new JsonParser(JsonParser.Settings.Default);
+
                     if (record.Payload is JsonElement je)
                     {
-                        var jsonPayload = je.GetRawText();
-                        var parser = new JsonParser(JsonParser.Settings.Default);
-                        protoMsg = parser.Parse(jsonPayload, msgDescriptor);
+                        protoMsg = parser.Parse(je.GetRawText(), entry.Descriptor);
                     }
                     else if (record.Payload != null)
                     {
-                         // Fallback objects
-                         var jsonPayload = JsonSerializer.Serialize(record.Payload);
-                         var parser = new JsonParser(JsonParser.Settings.Default);
-                         protoMsg = parser.Parse(jsonPayload, msgDescriptor);
+                        var jsonPayload = JsonSerializer.Serialize(record.Payload);
+                        protoMsg = parser.Parse(jsonPayload, entry.Descriptor);
                     }
                 }
                 catch (Exception ex)
@@ -77,7 +74,7 @@ namespace ProtoTestTool.Services
                 if (protoMsg != null)
                 {
                     await sendCallback(protoMsg, record.Header);
-                    await Task.Delay(10); // Small throttle
+                    await Task.Delay(10);
                 }
             }
         }

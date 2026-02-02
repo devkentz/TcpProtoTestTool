@@ -29,7 +29,7 @@ namespace ProtoTestTool.Network
 
         protected override void OnError(SocketError error)
         {
-            Console.WriteLine($"[ProxyServer] Error: {error}");
+            System.Diagnostics.Debug.WriteLine($"[ProxyServer] Error: {error}");
         }
     }
 }

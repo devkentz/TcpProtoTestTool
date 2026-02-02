@@ -34,6 +34,17 @@
     <SolidColorBrush x:Key="StatusReadyBrush" Color="#22c55e"/> 
     <SolidColorBrush x:Key="ButtonPrimaryBackground" Color="{StaticResource AccentColor}"/>
 
+    <!-- GridSplitter Style -->
+    <Style TargetType="GridSplitter">
+        <Setter Property="Background" Value="#2D2D30"/>
+        <Setter Property="ShowsPreview" Value="True"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
     <!-- Global Styles -->
     <Style TargetType="Window">
         <Setter Property="Background" Value="{StaticResource BgBrush}"/>
