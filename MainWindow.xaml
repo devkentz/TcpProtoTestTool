@@ -284,10 +284,10 @@
 
                             <!-- Replay Controls -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                <ui:Button Content="Load Recording" Icon="FolderOpen24" Click="LoadRecordingBtn_Click" />
+                                <ui:Button x:Name="LoadRecordingBtn" Content="Load Recording" Icon="FolderOpen24" Click="LoadRecordingBtn_Click" />
                                 <TextBlock x:Name="ReplayFileNameText" Text="No file loaded" VerticalAlignment="Center"
                                            Margin="10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <ui:Button Content="Replay All" Icon="Play24" Appearance="Primary" Margin="20,0,0,0"
+                                <ui:Button x:Name="ReplayAllBtn" Content="Replay All" Icon="Play24" Appearance="Primary" Margin="20,0,0,0"
                                            Click="ReplayAllBtn_Click" />
                             </StackPanel>
 

@@ -894,48 +894,64 @@ namespace ProtoTestTool
                 return;
             }
 
-
             if (!_networkService.IsConnected)
             {
                 MessageBox.Show("Not connected to server.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            State = AppState.Replay;
+            SetReplayLock(true);
 
-            // Delegate to ReplayService
-            await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) =>
+            try
             {
-                // Resolve Dynamic Header Type from ScriptAssembly
-                Type? headerType = null;
-                if (_scriptAssembly != null)
+                State = AppState.Replay;
+
+                await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) =>
                 {
-                    headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-                }
+                    Type? headerType = null;
+                    if (_scriptAssembly != null)
+                        headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
 
-                IHeader? header = null;
-                // Header Conversion (JsonElement -> Dynamic Header Type)
-                if (headerType != null && headerObj is System.Text.Json.JsonElement je)
-                {
-                    try
+                    IHeader? header = null;
+                    if (headerType != null && headerObj is System.Text.Json.JsonElement je)
                     {
-                        header = (IHeader?) JsonConvert.DeserializeObject(je.GetRawText(), headerType);
+                        try
+                        {
+                            header = (IHeader?)JsonConvert.DeserializeObject(je.GetRawText(), headerType);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[Replay] Header parse failed: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[Replay] Header parse failed: {ex.Message}");
-                    }
-                }
 
-                if (header == null)
-                    return;
+                    if (header == null)
+                        return;
 
-                await SendPacketPipelineAsync(msg, header, isReplay: true);
-            }, AppendLog);
+                    await SendPacketPipelineAsync(msg, header, isReplay: true);
+                }, AppendLog);
 
-            State = AppState.None;
+                AppendLog("Replay Finished.", Brushes.Green);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Replay Error] {ex.Message}", Brushes.Red);
+            }
+            finally
+            {
+                State = AppState.None;
+                SetReplayLock(false);
+            }
+        }
 
-            AppendLog("Replay Finished.", Brushes.Green);
+        private void SetReplayLock(bool locked)
+        {
+            var enabled = !locked;
+            ReplayAllBtn.IsEnabled = enabled;
+            LoadRecordingBtn.IsEnabled = enabled;
+            SendBtn.IsEnabled = enabled;
+            ConnectToggleBtn.IsEnabled = enabled;
+            ClientRecordBtn.IsEnabled = enabled;
         }
 
         public enum AppState
