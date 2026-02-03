@@ -67,13 +67,11 @@ namespace ProtoTestTool.Controls
 
         public void LoadPackets()
         {
-            var packets = ProtoLoaderManager.Instance.GetSendPackets();
+            var packets = ProtoLoaderManager.Instance.GetIMessages();
             _allNodes.Clear();
 
-            foreach (var packet in packets.OrderBy(p => p.Name))
-            {
+            foreach (var packet in packets.OrderBy(p => p.Name)) 
                 _allNodes.Add(new PacketNode { Name = packet.Name, Packet = packet });
-            }
 
             Filter("");
         }

@@ -25,15 +25,6 @@ namespace ProtoTestTool.ScriptContract
         /// </summary>
         int GetMsgId(Type type);
 
-        /// <summary>
-        /// Registers a packet type with an ID.
-        /// </summary>
-        /// <param name="msgId">The unique message ID.</param>
-        /// <param name="type">The C# type of the message.</param>
-        /// <param name="msgName">Optional. The message name (defaults to Type.Name).</param>
-        /// <param name="isRequest">Optional. If true, registers as a Send Packet. If false, Receive Packet. If null, just Generic.</param>
-        void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null);
-        
         MessageParser GetParserById(int msgId); 
     }
 }

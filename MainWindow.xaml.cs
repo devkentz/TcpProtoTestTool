@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -20,9 +19,11 @@ namespace ProtoTestTool
 {
     public partial class MainWindow
     {
-        private INetworkService _networkService; // Use Interface
-        private readonly ScriptLoader _scriptLoader = new();
-        private readonly Network.ByteBuffer _receiveBuffer = new();
+        private readonly INetworkService _networkService; // Use Interface
+
+        // Removed ScriptLoader
+        private readonly ByteBuffer _receiveBuffer = new();
+        private const string SettingsFileName = "settings.json";
 
         public MainWindow()
         {
@@ -36,14 +37,47 @@ namespace ProtoTestTool
 
             Closing += MainWindow_Closing;
             ResponseHeaderGrid.ItemsSource = _responseHeaders;
-
-            // Hook Add Interceptor Events
-            Loaded += (s, e) =>
-            {
-                // No remaining hooks
-            };
         }
 
+        public MainWindow(string workspacePath) : this()
+        {
+            _workspacePath = workspacePath;
+        }
+
+        public async Task StartLoadingAsync()
+        {
+            // Show Loading Overlay
+            LoadingOverlay.Visibility = Visibility.Visible;
+            MainContentGrid.Visibility = Visibility.Collapsed; // Hide content to prevent WebView2 airspace issues
+            
+            LoadingStatusText.Text = "Initializing...";
+            await Task.Delay(100); // UI Refresh
+
+            try
+            {
+                FileLogger.Instance.Init(_workspacePath);
+                
+                // Clear state
+                _protoFolderPath = "";
+                _assemblyManager.Unload();
+                ProtoLoaderManager.Instance.Clear();
+                PacketSelectorControl.LoadPackets();
+
+                LoadingStatusText.Text = "Initializing workspace files...";
+                InitializeWorkspaceFiles(_workspacePath);
+
+                LoadingStatusText.Text = "Loading configuration & scripts...";
+                await LoadWorkspaceConfiguration();
+                
+                UpdateWorkspaceUI();
+                AppendLog($"Workspace Loaded: {_workspacePath}", Brushes.DeepSkyBlue);
+            }
+            finally
+            {
+                MainContentGrid.Visibility = Visibility.Visible;
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+            }
+        }
 
 
         private void OnConnected()
@@ -163,9 +197,9 @@ namespace ProtoTestTool
                 var jsonHeader = await HeaderJsonEditorView.GetTextAsync();
                 IHeader? header = null;
 
-                if (_scriptAssembly != null)
+                if (ScriptAssembly != null)
                 {
-                    var headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                    var headerType = ScriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
                     if (headerType != null)
                     {
                         header = JsonConvert.DeserializeObject(jsonHeader, headerType) as IHeader;
@@ -187,7 +221,7 @@ namespace ProtoTestTool
             }
         }
 
-        private async Task SendPacketPipelineAsync(IMessage message, IHeader header, bool isReplay = false)
+        private async Task SendPacketPipelineAsync(IMessage message, IHeader header)
         {
             try
             {
@@ -235,7 +269,7 @@ namespace ProtoTestTool
             {
                 try
                 {
-                    var interceptor = (IPacketInterceptor)Activator.CreateInstance(interceptorItem.Type)!;
+                    var interceptor = (IPacketInterceptor) Activator.CreateInstance(interceptorItem.Type)!;
 
                     if (ctx.Direction == PacketDirection.Outbound)
                         await interceptor.OnOutboundAsync(ctx);
@@ -260,7 +294,6 @@ namespace ProtoTestTool
 
         // Workspace
         private string _workspacePath = "";
-        private const string SettingsFileName = "prototesttool.settings.json";
 
         // UI Binding Models
         public class KeyValueItem
@@ -274,85 +307,43 @@ namespace ProtoTestTool
         // Services
         private readonly IReplayService _replayService = new ReplayService();
 
-        public MainWindow(string workspacePath) : this()
-        {
-            _workspacePath = workspacePath;
-            FileLogger.Instance.Init(_workspacePath);
-            InitializeWorkspaceFiles(_workspacePath);
-            UpdateWorkspaceUI();
 
-            Title = $"ProtoTestTool - {_workspacePath}";
-
-            // Load Config
-            LoadWorkspaceConfiguration(_workspacePath);
-        }
-
-        private void MainWindow_Loaded(object sender, RoutedEventArgs e) => _ = MainWindow_LoadedAsync();
-
-        private Task MainWindow_LoadedAsync()
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_workspacePath))
-                    ShowWorkspaceDialog();
-
-                var screenWidth = SystemParameters.PrimaryScreenWidth;
-                var screenHeight = SystemParameters.PrimaryScreenHeight;
-
-                if (this.Width > screenWidth || this.Height > screenHeight)
-                {
-                    this.Width = Math.Min(this.Width, screenWidth * 0.9);
-                    this.Height = Math.Min(this.Height, screenHeight * 0.9);
-                    this.Left = (screenWidth - this.Width) / 2;
-                    this.Top = (screenHeight - this.Height) / 2;
-                }
-            }
-            catch (Exception ex)
-            {
-                FluentMessageBox.ShowError($"Editor Init Failed: {ex.Message}");
-                FileLogger.Instance.Error("MainWindow_LoadedAsync failed", ex);
-            }
-
-            return Task.CompletedTask;
-        }
 
         private WorkspaceConfig? _currentConfig;
 
-        private void LoadWorkspaceConfiguration(string workspacePath)
+        public async Task LoadWorkspaceConfiguration()
         {
+            var workspacePath = _workspacePath;
             try
             {
                 _currentConfig = WorkspaceConfig.Load(workspacePath);
 
                 // Apply Config to UI
                 IpBox.Text = _currentConfig.TargetIp;
-                if (PortBox != null) PortBox.Text = _currentConfig.TargetPort.ToString();
-                if (ProxyLocalPortBox != null) ProxyLocalPortBox.Text = _currentConfig.ProxyLocalPort.ToString();
-                if (ProxyTargetIpBox != null) ProxyTargetIpBox.Text = _currentConfig.ProxyTargetIp;
-                if (ProxyTargetPortBox != null) ProxyTargetPortBox.Text = _currentConfig.ProxyTargetPort.ToString();
+                if (PortBox != null)
+                    PortBox.Text = _currentConfig.TargetPort.ToString();
+
+                if (ProxyLocalPortBox != null)
+                    ProxyLocalPortBox.Text = _currentConfig.ProxyLocalPort.ToString();
+
+                if (ProxyTargetIpBox != null)
+                    ProxyTargetIpBox.Text = _currentConfig.ProxyTargetIp;
+
+                if (ProxyTargetPortBox != null)
+                    ProxyTargetPortBox.Text = _currentConfig.ProxyTargetPort.ToString();
 
                 var protoPath = _currentConfig.ProtoFolderPath;
 
                 // Auto-discovery if config is empty
                 if (string.IsNullOrWhiteSpace(protoPath) || !Directory.Exists(protoPath))
                 {
-                    try
-                    {
-                        if (Directory.GetFiles(workspacePath, "*.proto", SearchOption.AllDirectories).Length > 0)
-                        {
-                            protoPath = workspacePath;
-                            _currentConfig.ProtoFolderPath = protoPath; // Update config in memory
-                        }
-                    }
-                    catch
-                    {
-                    }
+                    protoPath = "";
                 }
 
-                _protoFolderPath = protoPath ?? "";
+                _protoFolderPath = protoPath;
 
                 // Trigger Async Initialization Sequence
-                _ = InitializeWorkspaceSequenceAsync(workspacePath, _protoFolderPath);
+                await InitializeWorkspaceSequenceAsync(workspacePath, _protoFolderPath);
             }
             catch (Exception ex)
             {
@@ -365,10 +356,10 @@ namespace ProtoTestTool
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
-                {
-                    await LoadProtosFromFolderAsync(protoPath);
-                }
+                // if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
+                // {
+                //     await LoadProtosFromFolderAsync(protoPath);
+                // }
 
                 Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
                 await CompileScriptsAsync(workspacePath, (msg, brush) => Dispatcher.Invoke(() => AppendLog(msg, brush)));
@@ -386,25 +377,25 @@ namespace ProtoTestTool
 
         private void SaveWorkspaceConfiguration()
         {
-            if (string.IsNullOrEmpty(_workspacePath)) 
+            if (string.IsNullOrEmpty(_workspacePath))
                 return;
-            
-            if (_currentConfig == null) 
+
+            if (_currentConfig == null)
                 _currentConfig = new WorkspaceConfig();
 
-            if (IpBox != null) 
+            if (IpBox != null)
                 _currentConfig.TargetIp = IpBox.Text;
-            
-            if (PortBox != null && int.TryParse(PortBox.Text, out var port)) 
+
+            if (PortBox != null && int.TryParse(PortBox.Text, out var port))
                 _currentConfig.TargetPort = port;
 
-            if (ProxyLocalPortBox != null && int.TryParse(ProxyLocalPortBox.Text, out var pPort)) 
+            if (ProxyLocalPortBox != null && int.TryParse(ProxyLocalPortBox.Text, out var pPort))
                 _currentConfig.ProxyLocalPort = pPort;
-            
-            if (ProxyTargetIpBox != null) 
+
+            if (ProxyTargetIpBox != null)
                 _currentConfig.ProxyTargetIp = ProxyTargetIpBox.Text;
-            
-            if (ProxyTargetPortBox != null && int.TryParse(ProxyTargetPortBox.Text, out var ptPort)) 
+
+            if (ProxyTargetPortBox != null && int.TryParse(ProxyTargetPortBox.Text, out var ptPort))
                 _currentConfig.ProxyTargetPort = ptPort;
 
             // Save Active Interceptors
@@ -422,12 +413,19 @@ namespace ProtoTestTool
 
         #region Workspace Management
 
-        private void WorkspaceBtn_Click(object sender, RoutedEventArgs e)
+        private async void WorkspaceBtn_Click(object sender, RoutedEventArgs e)
         {
-            ShowWorkspaceDialog();
+            try
+            {
+                await ShowWorkspaceDialog();
+            }
+            catch (Exception )
+            {
+                throw; // TODO handle exception
+            }
         }
 
-        private void ShowWorkspaceDialog()
+        private async Task ShowWorkspaceDialog()
         {
             var dialog = new WorkspaceDialog(_workspacePath)
             {
@@ -436,9 +434,11 @@ namespace ProtoTestTool
 
             if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
             {
+                if (_workspacePath.Equals(dialog.SelectedPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+                
                 var app = (App) Application.Current;
-                if (!string.Equals(dialog.SelectedPath, _workspacePath, StringComparison.OrdinalIgnoreCase) &&
-                    !app.TryAcquireWorkspaceLock(dialog.SelectedPath))
+                if (!app.TryAcquireWorkspaceLock(dialog.SelectedPath))
                 {
                     MessageBox.Show(
                         "이미 다른 ProtoTestTool에서 사용 중인 워크스페이스입니다.",
@@ -448,20 +448,18 @@ namespace ProtoTestTool
                     return;
                 }
 
+                // Save previous workspace state
+                if (!string.IsNullOrEmpty(_workspacePath))
+                {
+                    SaveWorkspaceConfiguration();
+                    if (ScriptGlobals.State is ScriptStateStore store)
+                    {
+                        try { store.FlushToPersistent(); } catch { }
+                    }
+                }
+
                 _workspacePath = dialog.SelectedPath;
-                FileLogger.Instance.Init(_workspacePath);
-                SaveWorkspaceSettings();
-
-                // Clear previous proto/script state
-                _protoFolderPath = "";
-                _scriptAssembly = null;
-                ProtoLoaderManager.Instance.Clear();
-                PacketSelectorControl.LoadPackets();
-
-                InitializeWorkspaceFiles(_workspacePath);
-                LoadWorkspaceConfiguration(_workspacePath);
-                UpdateWorkspaceUI();
-                AppendLog($"Workspace Loaded: {_workspacePath}", Brushes.DeepSkyBlue);
+                await StartLoadingAsync();
             }
             else
             {
@@ -474,6 +472,21 @@ namespace ProtoTestTool
             }
         }
 
+        public void UnloadCurrentWorkspace()
+        {
+            if (string.IsNullOrEmpty(_workspacePath)) return;
+
+            // Save settings one last time
+            SaveWorkspaceSettings();
+
+            // Close Logger
+            FileLogger.Instance.Close();
+
+            // Clear Path
+            _workspacePath = "";
+            UpdateWorkspaceUI();
+        }
+
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             SaveWorkspaceSettings();
@@ -481,39 +494,16 @@ namespace ProtoTestTool
 
             if (ScriptGlobals.State is ScriptStateStore store)
             {
-                try { store.FlushToPersistent(); }
+                try
+                {
+                    store.FlushToPersistent();
+                }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[StateStore] Flush on close failed: {ex.Message}");
                     FileLogger.Instance.Error("StateStore flush on close failed", ex);
                 }
             }
-        }
-
-        private void LoadWorkspaceSettings()
-        {
-            try
-            {
-                var settingsPath = Path.Combine(GlobalSettings.AppDataDir, SettingsFileName);
-                if (File.Exists(settingsPath))
-                {
-                    var json = File.ReadAllText(settingsPath);
-                    var settings = JsonConvert.DeserializeObject<AppSettings>(json);
-                    if (settings != null && !string.IsNullOrWhiteSpace(settings.WorkspacePath))
-                    {
-                        _workspacePath = settings.WorkspacePath;
-                        InitializeWorkspaceFiles(_workspacePath);
-
-                        LoadWorkspaceConfiguration(_workspacePath);
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore settings load errors
-            }
-
-            UpdateWorkspaceUI();
         }
 
 
@@ -523,23 +513,24 @@ namespace ProtoTestTool
 
         private async Task LoadProtosFromFolderAsync(string folder)
         {
-            await Task.Run(() =>
-            {
-                try
-                {
-                    Network.ProtoLoaderManager.Instance.LoadAllProtos(folder);
-                    Dispatcher.Invoke(() =>
-                    {
-                        PacketSelectorControl.Refresh();
-                        AppendLog($"[Proto] Compiled and Loaded from {folder}", Brushes.Green);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Dispatcher.Invoke(() => AppendLog($"[Error] Proto Compile: {ex.Message}", Brushes.Red));
-                    FileLogger.Instance.Error("LoadProtosFromFolderAsync failed", ex);
-                }
-            });
+           // await Task.Run(() =>
+           // {
+           //     try
+           //     {
+           //         ProtoLoaderManager.Instance.LoadAllProtos(folder);
+//
+           //         Dispatcher.Invoke(() =>
+           //         {
+           //             PacketSelectorControl.Refresh();
+           //             AppendLog($"[Proto] Compiled and Loaded from {folder}", Brushes.Green);
+           //         });
+           //     }
+           //     catch (Exception ex)
+           //     {
+           //         Dispatcher.Invoke(() => AppendLog($"[Error] Proto Compile: {ex.Message}", Brushes.Red));
+           //         FileLogger.Instance.Error("LoadProtosFromFolderAsync failed", ex);
+           //     }
+           // });
         }
 
         private void SaveWorkspaceSettings()
@@ -678,7 +669,7 @@ namespace ProtoTestTool
                 ConnectToggleBtn.Content = "Disconnect";
                 ConnectToggleBtn.Appearance = Wpf.Ui.Controls.ControlAppearance.Secondary;
                 ConnectToggleBtn.Icon = new Wpf.Ui.Controls.SymbolIcon(Wpf.Ui.Controls.SymbolRegular.PlugDisconnected24);
-                StatusIndicator.Fill = (Brush)FindResource("SystemFillColorSuccessBrush");
+                StatusIndicator.Fill = (Brush) FindResource("SystemFillColorSuccessBrush");
                 ResponseStatusText.Text = "Connected";
             }
             else
@@ -699,14 +690,14 @@ namespace ProtoTestTool
 
         private async Task LoadHeaderJsonAsync()
         {
-            if (_scriptAssembly == null)
+            if (ScriptAssembly == null)
             {
                 await HeaderJsonEditorView.SetTextAsync("{}");
                 return;
             }
 
-            var headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
-                             ?? _scriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
+            var headerType = ScriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
+                             ?? ScriptAssembly.GetTypes().FirstOrDefault(t => t.Name == "Header");
 
             if (headerType != null)
             {
@@ -753,7 +744,7 @@ namespace ProtoTestTool
 
         private async void ViewProtoSourceBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (PacketSelectorControl.SelectedPacket is not PacketConvertor convertor)
+            if (PacketSelectorControl.SelectedPacket is not { } convertor)
             {
                 FluentMessageBox.ShowError("패킷을 먼저 선택해 주세요.");
                 return;
@@ -773,7 +764,7 @@ namespace ProtoTestTool
 
         public void SendPacket(IHeader header, IMessage message)
         {
-            _ = SendPacketPipelineAsync(message, header, isReplay: false);
+            _ = SendPacketPipelineAsync(message, header);
         }
 
 
@@ -820,7 +811,7 @@ namespace ProtoTestTool
                     if (dict != null)
                     {
                         foreach (var kvp in dict)
-                            _responseHeaders.Add(new KeyValueItem { Key = kvp.Key, Value = kvp.Value?.ToString() ?? "" });
+                            _responseHeaders.Add(new KeyValueItem {Key = kvp.Key, Value = kvp.Value?.ToString() ?? ""});
                     }
 
                     await ResponseBoxView.SetTextAsync(jsonBody);
@@ -869,7 +860,7 @@ namespace ProtoTestTool
 
             if (_scriptEditorWindow == null || !_scriptEditorWindow.IsLoaded)
             {
-                _scriptEditorWindow = new ScriptEditorWindow(_workspacePath, _scriptLoader);
+                _scriptEditorWindow = new ScriptEditorWindow(_workspacePath);
                 _scriptEditorWindow.Closed += (s, args) => _scriptEditorWindow = null;
 
                 _scriptEditorWindow.OnRequestCompilation += () =>
@@ -942,15 +933,15 @@ namespace ProtoTestTool
                 await _replayService.ReplayAllAsync(_loadedPackets.ToList(), async (msg, headerObj) =>
                 {
                     Type? headerType = null;
-                    if (_scriptAssembly != null)
-                        headerType = _scriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+                    if (ScriptAssembly != null)
+                        headerType = ScriptAssembly.GetTypes().FirstOrDefault(t => typeof(IHeader).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
 
                     IHeader? header = null;
                     if (headerType != null && headerObj is System.Text.Json.JsonElement je)
                     {
                         try
                         {
-                            header = (IHeader?)JsonConvert.DeserializeObject(je.GetRawText(), headerType);
+                            header = (IHeader?) JsonConvert.DeserializeObject(je.GetRawText(), headerType);
                         }
                         catch (Exception ex)
                         {
@@ -961,7 +952,7 @@ namespace ProtoTestTool
                     if (header == null)
                         return;
 
-                    await SendPacketPipelineAsync(msg, header, isReplay: true);
+                    await SendPacketPipelineAsync(msg, header);
                 }, AppendLog);
 
                 AppendLog("Replay Finished.", Brushes.Green);
@@ -996,8 +987,6 @@ namespace ProtoTestTool
 
         private async void ReplayPacketGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_loadedPackets == null) return;
-
             if (ReplayPacketGrid.SelectedIndex >= 0 && ReplayPacketGrid.SelectedIndex < _loadedPackets.Count)
             {
                 var packet = _loadedPackets[ReplayPacketGrid.SelectedIndex];

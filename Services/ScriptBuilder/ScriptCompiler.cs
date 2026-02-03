@@ -1,19 +1,14 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 using ProtoTestTool.ScriptContract;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Services.ScriptBuilder
 {
-    public class ScriptLoader
+    public class ScriptCompiler
     {
         /// <summary>
         /// BCL DLL blacklist - these should NEVER be added from NuGet packages
@@ -231,7 +226,7 @@ namespace ProtoTestTool
         }
 
         public async Task<string> CompileFilesToDllAsync(
-            IEnumerable<string> sourceFiles,
+            string[] sourceFiles,
             IEnumerable<string>? referencePaths = null,
             Action<string>? logger = null,
             string? assemblyName = null,
@@ -250,14 +245,21 @@ namespace ProtoTestTool
             // Cleanup old ScriptBundle files (legacy)
             try
             {
-                var oldFiles = Directory.GetFiles(dir ?? "", "ScriptBundle.*.dll")
+                var oldFiles = Directory.GetFiles(dir ?? "", "*.dll")
                     .Concat(Directory.GetFiles(dir ?? "", "ScriptBundle.*.pdb"));
                 foreach (var oldFile in oldFiles)
                 {
-                    try { File.Delete(oldFile); } catch { }
+                    try { File.Delete(oldFile); }
+                    catch
+                    {
+                        // ignored
+                    }
                 }
             }
-            catch { }
+            catch
+            {
+                // ignored
+            }
 
             // Prepare Syntax Trees
             var syntaxTrees = new List<SyntaxTree>();
@@ -265,7 +267,9 @@ namespace ProtoTestTool
 
             foreach (var file in sourceFiles)
             {
-                if (!File.Exists(file)) continue;
+                if (!File.Exists(file)) 
+                    continue;
+                
                 var text = await File.ReadAllTextAsync(file);
                 var sourceText = SourceText.From(text, Encoding.UTF8);
                 var tree = CSharpSyntaxTree.ParseText(sourceText, parseOptions, file);
@@ -334,8 +338,8 @@ namespace ProtoTestTool
                 GetCompilationOptions()
             );
 
-            using var peStream = File.Create(dllPath);
-            using var pdbStream = File.Create(pdbPath);
+            await using var peStream = File.Create(dllPath);
+            await using var pdbStream = File.Create(pdbPath);
 
             var emitOptions = new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb);
             var emitResult = compilation.Emit(peStream, pdbStream, options: emitOptions);

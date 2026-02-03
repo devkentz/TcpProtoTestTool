@@ -11,20 +11,18 @@ namespace ProtoTestTool.Network
         private readonly string _upstreamIp;
         private readonly int _upstreamPort;
         private readonly ProxyInterceptorPipeline _pipeline;
-        private readonly IPacketCodec _codec;
 
-        public ProxyServer(string address, int port, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline, IPacketCodec codec) 
+        public ProxyServer(string address, int port, string upstreamIp, int upstreamPort, ProxyInterceptorPipeline pipeline) 
             : base(IPAddress.Parse(address), port)
         {
             _upstreamIp = upstreamIp;
             _upstreamPort = upstreamPort;
             _pipeline = pipeline;
-            _codec = codec;
         }
 
         protected override TcpSession CreateSession()
         {
-            return new ProxySession(this, _upstreamIp, _upstreamPort, _pipeline, _codec);
+            return new ProxySession(this, _upstreamIp, _upstreamPort, _pipeline);
         }
 
         protected override void OnError(SocketError error)

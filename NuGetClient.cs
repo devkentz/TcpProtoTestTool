@@ -2,6 +2,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
+using ProtoTestTool.Services.ScriptBuilder;
 
 namespace ProtoTestTool
 {
@@ -106,7 +107,7 @@ namespace ProtoTestTool
             foreach (var entry in tfmGroups.First(g => g.Key == bestTfm))
             {
                 // Filter out BCL assemblies - they conflict with runtime
-                if (ScriptLoader.IsBclAssembly(entry.Name))
+                if (ScriptCompiler.IsBclAssembly(entry.Name))
                 {
                     skippedBcl.Add(entry.Name);
                     continue;

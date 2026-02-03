@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using ProtoTestTool.Controls;
@@ -18,7 +13,6 @@ namespace ProtoTestTool
     {
         private readonly string _workspacePath;
         private readonly string _workspaceRoot;
-        private readonly ScriptLoader _scriptLoader;
 
         // Single WebView2 + file content cache
         private readonly Dictionary<string, string> _fileContents = new();
@@ -34,12 +28,11 @@ namespace ProtoTestTool
 
         public event Action? OnRequestCompilation;
 
-        public ScriptEditorWindow(string workspacePath, ScriptLoader scriptLoader)
+        public ScriptEditorWindow(string workspacePath)
         {
             InitializeComponent();
             _workspaceRoot = workspacePath;
             _workspacePath = Path.Combine(workspacePath, "Scripts");
-            _scriptLoader = scriptLoader;
 
             Loaded += ScriptEditorWindow_Loaded;
         }

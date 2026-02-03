@@ -18,7 +18,7 @@ namespace ProtoTestTool
 
         }
 
-        protected override void OnStartup(StartupEventArgs e)
+        protected override async void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
 
@@ -30,19 +30,18 @@ namespace ProtoTestTool
             {
                 if (!TryAcquireWorkspaceLock(workspaceDialog.SelectedPath))
                 {
-                    MessageBox.Show(
-                        "이미 다른 ProtoTestTool에서 사용 중인 워크스페이스입니다.",
-                        "워크스페이스 잠금",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
+                    MessageBox.Show("이미 다른 ProtoTestTool에서 사용 중인 워크스페이스입니다.", "워크스페이스 잠금", MessageBoxButton.OK, MessageBoxImage.Warning);
                     Shutdown();
                     return;
                 }
 
                 var mainWindow = new MainWindow(workspaceDialog.SelectedPath);
+                
                 Current.MainWindow = mainWindow;
                 ShutdownMode = ShutdownMode.OnMainWindowClose;
+                
                 mainWindow.Show();
+                await mainWindow.StartLoadingAsync();
             }
             else
             {

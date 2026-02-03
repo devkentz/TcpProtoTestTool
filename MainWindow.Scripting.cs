@@ -1,6 +1,5 @@
 using System.IO;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using System.Collections.ObjectModel;
@@ -8,6 +7,8 @@ using ProtoTestTool.Controls;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
 using ProtoTestTool.Services;
+using ProtoTestTool.Services.ScriptBuilder;
+using ProtoTestTool.Services.ProtoBuilder;
 
 namespace ProtoTestTool
 {
@@ -17,68 +18,37 @@ namespace ProtoTestTool
         private ProxyInterceptorPipeline? _proxyPipeline; // Hot Reload Support
         private IScriptStateStore? _scriptState;
 
-        private static readonly Regex GeneratedDllPattern = new(@".+\.[a-fA-F0-9]{8}\.dll$", RegexOptions.Compiled);
+        // Assembly Manager & Builders
+        private readonly AssemblyContextManager _assemblyManager = new();
+        private ScriptBuilder? _scriptBuilder;
+        private ProtoBuilder? _protoBuilder;
 
-        // Single unloadable context for both Proto and Script assemblies
-        private UnloadableAssemblyContext? _workspaceAssemblyContext;
-        private Assembly? _protoAssembly;
-        private Assembly? _scriptAssembly;
+        private void InitializeBuilders()
+        {
+            _scriptBuilder = new ScriptBuilder(_assemblyManager);
+            _protoBuilder = new ProtoBuilder(_assemblyManager);
+        }
+
+        // Accessors for Loaded Assemblies
+        private Assembly? ScriptAssembly => _assemblyManager.ScriptAssembly;
 
         // Document IDs for Reference Updates
         public async Task CompileScriptsAsync(string workspacePath, Action<string, Brush> logAction)
         {
-            if (string.IsNullOrEmpty(workspacePath)) return;
+            if (_scriptBuilder == null) InitializeBuilders();
 
-            var scriptsDir = Path.Combine(workspacePath, "Scripts");
-            if (!Directory.Exists(scriptsDir))
+            var assembly = await _scriptBuilder!.CompileAsync(workspacePath, logAction);
+
+            if (assembly != null)
             {
-                logAction($"Scripts folder not found: {scriptsDir}", Brushes.Red);
-                return;
+                await OnScriptAssemblyLoaded(assembly, logAction);
             }
+        }
 
+        private async Task OnScriptAssemblyLoaded(Assembly assembly, Action<string, Brush> logAction)
+        {
             try
             {
-                logAction("Starting Compilation...", Brushes.White);
-
-                // Collect Source Files
-                var scriptFiles = Directory.GetFiles(scriptsDir, "*.cs", SearchOption.TopDirectoryOnly);
-                if (scriptFiles.Length == 0)
-                {
-                    logAction("No .cs files found in Scripts folder.", Brushes.Orange);
-                    return;
-                }
-
-                logAction($"Found {scriptFiles.Length} script files.", Brushes.White);
-
-                UnloadPreviousAssembly();
-
-                var outputDll = Path.Combine(workspacePath, "Script.dll");
-                if (File.Exists(outputDll))
-                {
-                    try
-                    {
-                        File.Delete(outputDll);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ScriptLoader] Failed to delete old DLL: {ex.Message}");
-                        FileLogger.Instance.Error("Failed to delete old Script.dll", ex);
-                    }
-                }
-
-                var refs = CollectReferences(workspacePath, scriptsDir);
-
-                await _scriptLoader.CompileFilesToDllAsync(
-                    scriptFiles, refs,
-                    msg => logAction(msg, Brushes.Gray),
-                    assemblyName: "Script",
-                    outputPath: outputDll);
-
-                logAction("Compilation Success! Loading Assembly...", Brushes.DeepSkyBlue);
-
-                var assembly = LoadAssemblies(workspacePath, outputDll);
-
-
                 var registryType = assembly.GetTypes()
                     .FirstOrDefault(t => typeof(IPacketRegistry).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
 
@@ -90,14 +60,14 @@ namespace ProtoTestTool
                 }
                 else
                 {
-                    registry = ProtoLoaderManager.Instance;
+                    throw new NotImplementedException($"[Registry] Using script-defined {nameof(IPacketRegistry)} not implemented");
                 }
 
                 var codecType = assembly.GetTypes().FirstOrDefault(t => typeof(IPacketCodec).IsAssignableFrom(t) && t is {IsAbstract: false, IsInterface: false});
-                
-                if (codecType == null) 
+
+                if (codecType == null)
                     throw new Exception("IPacketCodec implementation not found in scripts.");
-                
+
                 var codec = (IPacketCodec) Activator.CreateInstance(codecType)!;
 
                 InitializeScriptGlobals(registry, codec);
@@ -110,83 +80,9 @@ namespace ProtoTestTool
             }
             catch (Exception ex)
             {
-                logAction($"Error:\n{ex}", Brushes.Red);
-                FileLogger.Instance.Error("CompileScriptsAsync failed", ex);
+                logAction($"[Loader Error] {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("OnScriptAssemblyLoaded failed", ex);
             }
-        }
-
-        private void UnloadPreviousAssembly()
-        {
-            _proxyPipeline?.Clear();
-
-            if (_workspaceAssemblyContext != null)
-            {
-                ProtoLoaderManager.Instance.Clear();
-                _scriptAssembly = null;
-                _protoAssembly = null;
-                _workspaceAssemblyContext.Unload();
-                _workspaceAssemblyContext = null;
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            }
-        }
-
-        private List<string> CollectReferences(string workspacePath, string scriptsDir)
-        {
-            var refs = new List<string>();
-            var dlls = Directory.GetFiles(workspacePath, "*.dll").ToList();
-
-            var libsDir = Path.Combine(scriptsDir, "Libs");
-            if (Directory.Exists(libsDir))
-            {
-                dlls.AddRange(Directory.GetFiles(libsDir, "*.dll", SearchOption.AllDirectories));
-            }
-
-            foreach (var dll in dlls)
-            {
-                var fileName = Path.GetFileName(dll);
-                if (!GeneratedDllPattern.IsMatch(dll) &&
-                    !fileName.Equals("Script.dll", StringComparison.OrdinalIgnoreCase))
-                {
-                    refs.Add(dll);
-                }
-            }
-
-            var protoGenDir = Path.Combine(workspacePath, "ProtoGen");
-            if (Directory.Exists(protoGenDir))
-            {
-                var protoDlls = Directory.GetFiles(protoGenDir, "*.dll", SearchOption.AllDirectories);
-                foreach (var p in protoDlls)
-                {
-                    if (!refs.Contains(p) && !GeneratedDllPattern.IsMatch(p))
-                    {
-                        refs.Add(p);
-                    }
-                }
-            }
-
-            return refs;
-        }
-
-        private Assembly LoadAssemblies(string workspacePath, string outputDll)
-        {
-            _workspaceAssemblyContext = new UnloadableAssemblyContext();
-
-            var protosDll = Path.Combine(workspacePath, "Protos.dll");
-            if (File.Exists(protosDll))
-            {
-                _protoAssembly = _workspaceAssemblyContext.LoadFromFile(protosDll);
-
-                var messageTypes = _protoAssembly.GetTypes()
-                    .Where(t => typeof(Google.Protobuf.IMessage).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
-
-                foreach (var type in messageTypes)
-                    ProtoLoaderManager.Instance.RegisterPacket(type);
-            }
-
-            var assembly = _workspaceAssemblyContext.LoadFromFile(outputDll);
-            _scriptAssembly = assembly;
-            return assembly;
         }
 
         private void InitializeScriptGlobals(IPacketRegistry registry, IPacketCodec codec)
@@ -233,6 +129,23 @@ namespace ProtoTestTool
         private void Selector_SelectionChanged(object sender, RoutedEventArgs e)
         {
             SaveWorkspaceConfiguration();
+
+            if (sender.Equals(ProxyInterceptorSelector) && _proxyPipeline != null && _proxyServer is {IsStarted: true})
+            {
+                RebuildProxyPipeline();
+            }
+        }
+
+        private void RebuildProxyPipeline()
+        {
+            if (_proxyPipeline == null)
+                return;
+
+            var activeItems = ProxyInterceptorSelector.GetActiveInterceptors();
+
+            _proxyPipeline.Update(activeItems);
+
+            AppendProxyLog($"Pipeline updated: {activeItems.Count} interceptor(s) active.");
         }
 
         private void UpdateIntellisense(Assembly assembly, Action<string, Brush> logAction)
@@ -244,9 +157,7 @@ namespace ProtoTestTool
                 typeof(IScriptLogger),
             };
 
-            if (ScriptGlobals.Registry != null)
-                types.AddRange(ScriptGlobals.Registry.GetMessageTypes());
-
+            types.AddRange(ScriptGlobals.Registry.GetMessageTypes());
             types.AddRange(assembly.GetTypes().Where(t => t.IsPublic));
 
             var json = CompletionService.GenerateCompletionJson(types);
@@ -261,59 +172,47 @@ namespace ProtoTestTool
             });
         }
 
-        // ...
 
-        private Task StartProxyServerAsync(int localPort, string targetIp, int targetPort)
+        private void StartProxyServer(int localPort, string targetIp, int targetPort)
         {
-            return Task.Run(() =>
+            try
             {
-                try
-                {
-                    var assembly = _scriptAssembly;
-                    if (assembly == null) 
-                        throw new Exception("Script assembly not loaded.");
+                var assembly = ScriptAssembly;
+                if (assembly == null)
+                    throw new Exception("Script assembly not loaded.");
 
-                    // 1. Get Codec from Globals
-                    if (ScriptGlobals.Codec == null) 
-                        throw new Exception("IPacketCodec이 초기화되지 않았습니다. (Compile First)");
-                    
-                    var codec = ScriptGlobals.Codec;
+                // 2. Find Interceptors
+                var newPipeline = new ProxyInterceptorPipeline();
 
-                    // 2. Find Interceptors
-                    _proxyPipeline = new ProxyInterceptorPipeline(); // Assign to field
+                // [수정 2] 불필요한 Task 리턴 제거하고 깔끔하게 호출
+                Dispatcher.InvokeAsync(() => newPipeline.Update(ProxyInterceptorSelector.GetActiveInterceptors()));
 
-                    // Get Active Interceptors from UI (Dispatcher)
-                    List<InterceptorItem> activeInterceptorNames = new();
-                    Dispatcher.Invoke(() => { activeInterceptorNames = ProxyInterceptorSelector.GetActiveInterceptors(); });
+                // 3. Create Server
+                _proxyServer = new ProxyServer("0.0.0.0", localPort, targetIp, targetPort, newPipeline);
+                _proxyServer.Start();
 
-                    foreach (var interceptorItem in activeInterceptorNames)
-                    {
-                        var interceptor = (IPacketInterceptor) Activator.CreateInstance(interceptorItem.Type)!;
-                        _proxyPipeline.Add(interceptor);
-                    }
+                _proxyPipeline = newPipeline;
 
-                    // 3. Create Server
-                    _proxyServer = new ProxyServer("0.0.0.0", localPort, targetIp, targetPort, _proxyPipeline, codec);
-                    _proxyServer.Start();
-
-                    Dispatcher.Invoke(() => AppendProxyLog($"Proxy Started on {localPort} -> {targetIp}:{targetPort}"));
-                }
-                catch (Exception ex)
-                {
-                    Dispatcher.Invoke(() => AppendProxyLog($"Error starting proxy: {ex.Message}"));
-                    FileLogger.Instance.Error("StartProxyServerAsync failed", ex);
-                    throw;
-                }
-            });
+                Dispatcher.Invoke(() => AppendProxyLog($"Proxy Started on {localPort} -> {targetIp}:{targetPort}"));
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => AppendProxyLog($"Error starting proxy: {ex.Message}"));
+                FileLogger.Instance.Error("StartProxyServerAsync failed", ex);
+                throw;
+            }
         }
 
 
         public void InitializeWorkspaceFiles(string workspacePath)
         {
-            if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath)) return;
+            if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath)) 
+                return;
 
             var scriptsDir = Path.Combine(workspacePath, "Scripts");
-            if (!Directory.Exists(scriptsDir)) Directory.CreateDirectory(scriptsDir);
+            
+            if (!Directory.Exists(scriptsDir)) 
+                Directory.CreateDirectory(scriptsDir);
 
             // Create default .cs files
             CreateIfMissing(scriptsDir, "PacketHeader.cs", "PacketHeader");
@@ -363,8 +262,8 @@ namespace ProtoTestTool
             try
             {
                 var protoDir = !string.IsNullOrEmpty(_workspacePath)
-                    ? Path.Combine(_workspacePath, "Protos")
-                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Protos");
+                    ? Path.Combine(_workspacePath, BuildConstants.ProtosFolder)
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, BuildConstants.ProtosFolder);
 
                 if (!Directory.Exists(protoDir))
                 {
@@ -393,182 +292,58 @@ namespace ProtoTestTool
 
         private async Task ProcessProtosAsync(string[] protoFiles)
         {
-            try
+            if (_protoBuilder == null)
+                InitializeBuilders();
+
+            // Stop Connection
+            if (_networkService.IsConnected)
             {
-                ProtoLogBox.Text += $"\n[Manager] Processing {protoFiles.Length} files...";
-                ProtoLogBox.ScrollToEnd();
-                AppendLog($"[Proto] Processing {protoFiles.Length} files...", Brushes.MediumPurple);
+                _networkService.Disconnect();
+                AppendLog("[Manager] Client disconnected for reload.", Brushes.Yellow);
+            }
 
-                // Use Workspace Path if available, otherwise fallback
-                var targetDir = !string.IsNullOrEmpty(_workspacePath)
-                    ? Path.Combine(_workspacePath, "Protos", "ProtoGen")
-                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Protos", "ProtoGen");
+            if (_proxyServer is {IsStarted: true})
+            {
+                _proxyServer.Stop();
+                _proxyServer.Dispose();
+                _proxyServer = null;
 
-                // Stop active connections effectively to release assembly references
-                if (_networkService.IsConnected)
-                {
-                    _networkService.Disconnect();
-                    AppendLog("[Manager] Client disconnected for reload.", Brushes.Yellow);
-                }
+                Dispatcher.Invoke(() => ProxyStartBtn.Content = "프록시 시작 (Start Proxy)");
+                AppendProxyLog("[Manager] Proxy stopped for reload.");
+            }
 
-                if (_proxyServer != null && _proxyServer.IsStarted)
-                {
-                    _proxyServer.Stop();
-                    _proxyServer.Dispose();
-                    _proxyServer = null;
-                    Dispatcher.Invoke(() => ProxyStartBtn.Content = "프록시 시작 (Start Proxy)");
-                    AppendProxyLog("[Manager] Proxy stopped for reload.");
-                }
+            var assembly = await _protoBuilder!.ProcessProtosAsync(
+                protoFiles,
+                _workspacePath,
+                msg => ProtoLogBox.Text += msg,
+                AppendLog);
 
-                // Force GC to help unload
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-
-                if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
-
-                // Clean old CS files to avoid duplicates/stale files
-                var oldCs = Directory.GetFiles(targetDir, "*.cs");
-                foreach (var f in oldCs)
-                {
-                    try
-                    {
-                        File.Delete(f);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete {Path.GetFileName(f)}: {ex.Message}");
-                        FileLogger.Instance.Error($"Failed to delete old CS file: {Path.GetFileName(f)}", ex);
-                    }
-                }
-
-                // Track loaded files
-                _loadedProtoFiles.Clear();
-                foreach (var protoPath in protoFiles)
-                {
-                    _loadedProtoFiles.Add(protoPath);
-                }
-
-                // Compile all proto files at once (handles imports correctly)
-                var compiler = new ProtoCompiler();
-                try
-                {
-                    ProtoLogBox.Text += $"\n  - Compiling {protoFiles.Length} proto files...";
-                    compiler.CompileProtosToCSharp(protoFiles, targetDir);
-                    ProtoLogBox.Text += $"\n  - Proto to C# conversion complete.";
-                }
-                catch (Exception ex)
-                {
-                    ProtoLogBox.Text += $"\n[Error] Proto compilation failed: {ex.Message}";
-                    AppendLog($"[Proto Error] {ex.Message}", Brushes.Red);
-                    FileLogger.Instance.Error("Proto compilation failed", ex);
-                    return;
-                }
-
-                // Compile All Generated CS -> Single Protos.dll
-                var csFiles = Directory.GetFiles(targetDir, "*.cs");
-                if (csFiles.Length > 0)
-                {
-                    ProtoLogBox.Text += $"\n[Manager] Building Protos.dll from {csFiles.Length} sources...";
-
-                    // Single Protos.dll path
-                    var outputDll = Path.Combine(!string.IsNullOrEmpty(_workspacePath) ? _workspacePath : targetDir, "Protos.dll");
-
-                    // Unload previous workspace context (both Proto and Script)
-                    if (_workspaceAssemblyContext != null)
-                    {
-                        ProtoLoaderManager.Instance.Clear();
-                        _protoAssembly = null;
-                        _scriptAssembly = null;
-                        _workspaceAssemblyContext.Unload();
-                        _workspaceAssemblyContext = null;
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                        ProtoLogBox.Text += $"\n  - Previous assemblies unloaded.";
-                    }
-
-                    // Delete old DLL if exists
-                    if (File.Exists(outputDll))
-                    {
-                        try
-                        {
-                            File.Delete(outputDll);
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete old Protos.dll: {ex.Message}");
-                            FileLogger.Instance.Error("Failed to delete old Protos.dll", ex);
-                        }
-                    }
-
-                    // Compile all CS files directly to Protos.dll
-                    await _scriptLoader.CompileFilesToDllAsync(
-                        csFiles, null,
-                        msg => ProtoLogBox.Text += $"\n  {msg}",
-                        assemblyName: "Protos",
-                        outputPath: outputDll);
-
-                    // Create new workspace context
-                    _workspaceAssemblyContext = new UnloadableAssemblyContext();
-
-                    // Load Protos.dll
-                    _protoAssembly = _workspaceAssemblyContext.LoadFromFile(outputDll);
-
-                    var messageTypes = _protoAssembly.GetTypes()
-                        .Where(t => typeof(Google.Protobuf.IMessage).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract)
-                        .ToList();
-
-                    foreach (var type in messageTypes)
-                        ProtoLoaderManager.Instance.RegisterPacket(type);
-
-                    ProtoLogBox.Text += $"\n[Manager] Protos.dll updated ({messageTypes.Count} messages)";
-                    AppendLog($"[Proto] Loaded {messageTypes.Count} message types", Brushes.Green);
-
-                    // Script needs recompilation to use new Proto types
-                    var scriptDll = Path.Combine(!string.IsNullOrEmpty(_workspacePath) ? _workspacePath : targetDir, "Script.dll");
-                    if (File.Exists(scriptDll))
-                    {
-                        _scriptAssembly = null;
-                        ProtoLogBox.Text += $"\n[Manager] Proto changed. Please recompile Scripts.";
-                        AppendLog("[Proto] Script 재컴파일 필요", Brushes.Orange);
-                    }
-                }
-                else
-                {
-                    ProtoLogBox.Text += $"\n[Manager] No C# files generated.";
-                }
-
+            if (assembly != null)
+            {
                 // Update UI (Proto Manager List)
+                _loadedProtoFiles.Clear();
+
+                foreach (var protoPath in protoFiles)
+                    _loadedProtoFiles.Add(protoPath);
+
                 ProtoFileListBox.ItemsSource = null;
                 ProtoFileListBox.ItemsSource = _loadedProtoFiles;
 
                 // Refresh PacketSelector
                 PacketSelectorControl.Refresh();
 
-
-                // Update ScriptEditorWindow Intellisense if open
-                if (_scriptEditorWindow != null && _scriptEditorWindow.IsLoaded)
+                // Recompile Scripts if valid workspace
+                if (!string.IsNullOrEmpty(_workspacePath))
                 {
-                    var types = new List<Type>
+                    var scriptDll = Path.Combine(_workspacePath, BuildConstants.ScriptDllName);
+                    if (File.Exists(scriptDll))
                     {
-                        typeof(ScriptGlobals),
-                        typeof(IScriptStateStore),
-                        typeof(IScriptLogger),
-                    };
-
-                    types.AddRange(ProtoLoaderManager.Instance.PacketsByName.Values.Select(p => p.Type));
-
-                    var json = CompletionService.GenerateCompletionJson(types);
-                    _ = _scriptEditorWindow.UpdateCompletionsAsync(json);
-                    ProtoLogBox.Text += $"\n[Manager] Script editor intellisense updated.";
+                        ProtoLogBox.Text += $"\n[Manager] Proto changed. Please recompile Scripts.";
+                        AppendLog("[Proto] Script 재컴파일 필요", Brushes.Orange);
+                    }
                 }
 
                 ProtoLogBox.ScrollToEnd();
-            }
-            catch (Exception ex)
-            {
-                ProtoLogBox.Text += $"\n[Critical Error] {ex.Message}";
-                AppendLog($"[Proto Error] {ex.Message}", Brushes.Red);
-                FileLogger.Instance.Error("ProcessProtosAsync critical error", ex);
             }
         }
 
@@ -590,25 +365,27 @@ namespace ProtoTestTool
                 return;
             }
 
-            // Start Proxy
-            if (_scriptAssembly == null)
-            {
-                FluentMessageBox.ShowError("스크립트를 먼저 컴파일해 주세요.");
-                return;
-            }
-
-            if (!int.TryParse(ProxyLocalPortBox.Text, out var localPort) ||
-                !int.TryParse(ProxyTargetPortBox.Text, out var targetPort))
-            {
-                FluentMessageBox.ShowError("포트 번호가 올바르지 않습니다.");
-                return;
-            }
-
-            var targetIp = ProxyTargetIpBox.Text;
-
             try
             {
-                await StartProxyServerAsync(localPort, targetIp, targetPort);
+                ProxyStartBtn.IsEnabled = false;
+
+                // Start Proxy
+                if (ScriptAssembly == null)
+                {
+                    FluentMessageBox.ShowError("스크립트를 먼저 컴파일해 주세요.");
+                    return;
+                }
+
+                if (!int.TryParse(ProxyLocalPortBox.Text, out var localPort) ||
+                    !int.TryParse(ProxyTargetPortBox.Text, out var targetPort))
+                {
+                    FluentMessageBox.ShowError("포트 번호가 올바르지 않습니다.");
+                    return;
+                }
+
+                var targetIp = ProxyTargetIpBox.Text;
+
+                StartProxyServer(localPort, targetIp, targetPort);
                 ProxyStartBtn.Content = "프록시 중지 (Stop Proxy)";
             }
             catch (Exception ex)
@@ -616,6 +393,10 @@ namespace ProtoTestTool
                 FluentMessageBox.ShowError($"프록시 시작 실패: {ex.Message}");
                 AppendProxyLog($"Start Failed: {ex.Message}");
                 FileLogger.Instance.Error("ProxyStartBtn_Click failed", ex);
+            }
+            finally
+            {
+                ProxyStartBtn.IsEnabled = true;
             }
         }
 

@@ -1,10 +1,5 @@
-using System;
 using System.IO;
 using System.Windows;
-using System.Windows.Controls;
-using System.Linq;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace ProtoTestTool
 {
@@ -160,6 +155,20 @@ namespace ProtoTestTool
             {
                 try
                 {
+                    // If deleting current workspace, UNLOAD it first
+                    if (string.Equals(path, _currentWorkspacePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (Owner is MainWindow mw)
+                        {
+                            mw.UnloadCurrentWorkspace();
+                        }
+                        
+                        if (Application.Current is App app)
+                        {
+                            app.ReleaseWorkspaceLock();
+                        }
+                    }
+
                     Directory.Delete(path, true);
                 }
                 catch (UnauthorizedAccessException)

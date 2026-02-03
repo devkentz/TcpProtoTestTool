@@ -1,58 +1,46 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using ProtoTestTool.Controls;
 using ProtoTestTool.ScriptContract;
 
 namespace ProtoTestTool.Network
 {
     public class ProxyInterceptorPipeline
     {
-        private readonly List<IPacketInterceptor> _interceptors = new();
-        private readonly object _lock = new();
+        private readonly List<InterceptorItem> _interceptors = new();
 
-        public void Add(IPacketInterceptor interceptor)
+        public void Update(List<InterceptorItem> interceptors)
         {
-            lock (_lock)
-            {
-                _interceptors.Add(interceptor);
-            }
+            _interceptors.Clear();
+            _interceptors.AddRange(interceptors);
+        }
+
+        public void Remove(InterceptorItem interceptor)
+        {
+            _interceptors.Remove(interceptor);
         }
 
         public void Clear()
         {
-            lock (_lock)
-            {
-                _interceptors.Clear();
-            }
+            _interceptors.Clear();
         }
 
-        public async ValueTask RunInboundAsync(PacketContext context)
+        public async ValueTask InterceptorCall(PacketContext context)
         {
-            List<IPacketInterceptor> snapshot;
-            lock (_lock)
-            {
-                snapshot = new List<IPacketInterceptor>(_interceptors);
-            }
-
-            foreach (var interceptor in snapshot)
-            {
-                if (context.Drop) return;
-                await interceptor.OnInboundAsync(context);
-            }
+            await InterceptorCall(context, _interceptors);
         }
 
-        public async ValueTask RunOutboundAsync(PacketContext context)
+        private async Task InterceptorCall(PacketContext ctx, IEnumerable<InterceptorItem> interceptors)
         {
-            List<IPacketInterceptor> snapshot;
-            lock (_lock)
+            foreach (var interceptorItem in interceptors)
             {
-                snapshot = new List<IPacketInterceptor>(_interceptors);
-            }
+                var interceptor = (IPacketInterceptor) Activator.CreateInstance(interceptorItem.Type)!;
 
-            foreach (var interceptor in snapshot)
-            {
-                if (context.Drop) return;
-                await interceptor.OnOutboundAsync(context);
+                if (ctx.Direction == PacketDirection.Outbound)
+                    await interceptor.OnOutboundAsync(ctx);
+                else
+                    await interceptor.OnInboundAsync(ctx);
             }
         }
     }

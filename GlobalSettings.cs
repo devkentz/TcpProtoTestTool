@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Newtonsoft.Json;
 
 namespace ProtoTestTool
@@ -26,7 +23,11 @@ namespace ProtoTestTool
                     return JsonConvert.DeserializeObject<GlobalSettings>(json) ?? new GlobalSettings();
                 }
             }
-            catch { }
+            catch
+            {
+                // ignored
+            }
+
             return new GlobalSettings();
         }
 
@@ -39,7 +40,10 @@ namespace ProtoTestTool
                 var json = JsonConvert.SerializeObject(this, Formatting.Indented);
                 File.WriteAllText(path, json);
             }
-            catch { }
+            catch
+            {
+                // ignored
+            }
         }
 
         public void AddRecent(string path)
@@ -55,6 +59,7 @@ namespace ProtoTestTool
             {
                 RecentWorkspaces = RecentWorkspaces.Take(10).ToList();
             }
+            
             Save();
         }
 

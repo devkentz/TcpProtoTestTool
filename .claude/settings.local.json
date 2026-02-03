@@ -20,7 +20,8 @@
       "Bash(find:*)",
       "WebSearch",
       "Bash(npx skills add:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(tree:*)"
     ]
   }
 }

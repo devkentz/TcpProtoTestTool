@@ -70,18 +70,6 @@ public class PacketRegistry : IPacketRegistry
     private readonly Dictionary<Type, int> _typeToId = new();
     private readonly Dictionary<int, MessageParser> _parsers = new();
 
-    public void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null)
-    {
-        _idToType[msgId] = type;
-        _typeToId[type] = msgId;
-
-        var descriptor = ((MessageDescriptor?)type
-            .GetProperty(""Descriptor"", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-            ?.GetValue(null));
-        if (descriptor != null)
-            _parsers[msgId] = descriptor.Parser;
-    }
-
     public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
     public Type? GetMessageType(int msgId) => _idToType.GetValueOrDefault(msgId);
     public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type);

@@ -19,12 +19,13 @@ namespace ProtoTestTool.Controls
             InitializeComponent();
         }
 
-        public void SetInterceptors(List<InterceptorItem> allInterceptors, List<string> activeInterceptors)
+        public void SetInterceptors(IReadOnlyList<InterceptorItem> allInterceptors, List<string> activeInterceptors)
         {
-            foreach (var item in allInterceptors) 
-                item.IsActive = activeInterceptors.Contains(item.Name);
-            
-            InterceptorList.ItemsSource = allInterceptors;
+            var items = allInterceptors
+                .Select(i => new InterceptorItem(i.Name, i.Type) { IsActive = activeInterceptors.Contains(i.Name) })
+                .ToList();
+
+            InterceptorList.ItemsSource = items;
         }
 
         public List<InterceptorItem> GetActiveInterceptors()
@@ -34,7 +35,7 @@ namespace ProtoTestTool.Controls
                 return items.Where(i => i.IsActive).ToList();
             }
 
-            return new List<InterceptorItem>();
+            return [];
         }
 
 

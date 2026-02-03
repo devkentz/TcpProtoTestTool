@@ -44,5 +44,13 @@ namespace ProtoTestTool.Services
             else
                 _logger.Error(message);
         }
+        public void Close()
+        {
+            if (_logger is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+            _logger = Serilog.Core.Logger.None;
+        }
     }
 }
