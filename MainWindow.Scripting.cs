@@ -76,7 +76,7 @@ namespace ProtoTestTool
                 PacketSelectorControl.Refresh();
                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
 
-                UpdateIntellisense(assembly, logAction);
+
             }
             catch (Exception ex)
             {
@@ -148,29 +148,7 @@ namespace ProtoTestTool
             AppendProxyLog($"Pipeline updated: {activeItems.Count} interceptor(s) active.");
         }
 
-        private void UpdateIntellisense(Assembly assembly, Action<string, Brush> logAction)
-        {
-            var types = new List<Type>
-            {
-                typeof(ScriptGlobals),
-                typeof(IScriptStateStore),
-                typeof(IScriptLogger),
-            };
 
-            types.AddRange(ScriptGlobals.Registry.GetMessageTypes());
-            types.AddRange(assembly.GetTypes().Where(t => t.IsPublic));
-
-            var json = CompletionService.GenerateCompletionJson(types);
-            logAction("[Intellisense] Updated metadata.", Brushes.Gray);
-
-            Dispatcher.Invoke(() =>
-            {
-                if (_scriptEditorWindow != null && _scriptEditorWindow.IsLoaded)
-                {
-                    _ = _scriptEditorWindow.UpdateCompletionsAsync(json);
-                }
-            });
-        }
 
 
         private void StartProxyServer(int localPort, string targetIp, int targetPort)

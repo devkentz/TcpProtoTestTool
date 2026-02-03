@@ -57,7 +57,7 @@ namespace ProtoTestTool.Services
             ProtoAssembly = _context!.LoadFromFile(dllPath);
 
             var messageTypes = ProtobufHelper.GetIMessageTypes(ProtoAssembly);
-            ProtoLoaderManager.Instance.RegisterPacket(messageTypes);
+            ProtoLoaderManager.Instance.InitPacket(messageTypes);
             return ProtoAssembly;
         }
 

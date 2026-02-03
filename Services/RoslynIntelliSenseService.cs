@@ -25,14 +25,32 @@ public class RoslynIntelliSenseService
 
     public Task InitializeAsync(string workspacePath, IEnumerable<string>? additionalReferences = null)
     {
-        var assemblies = MefHostServices.DefaultAssemblies
-            .Add(typeof(RoslynCompletionService).Assembly)
-            .Add(typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions).Assembly);
-        var host = MefHostServices.Create(assemblies);
+        // Load all Roslyn related assemblies explicitly to ensure MEF composition works
+        var assemblies = new List<System.Reflection.Assembly>
+        {
+            typeof(Microsoft.CodeAnalysis.Host.Mef.MefHostServices).Assembly,
+            typeof(Microsoft.CodeAnalysis.CSharp.CSharpCompilation).Assembly,
+            typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions).Assembly,
+            typeof(Microsoft.CodeAnalysis.Completion.CompletionService).Assembly,
+        };
+
+        try
+        {
+            // Try to load CSharp Features assembly (where C# CompletionProvider lives)
+             assemblies.Add(System.Reflection.Assembly.Load("Microsoft.CodeAnalysis.CSharp.Features"));
+             assemblies.Add(System.Reflection.Assembly.Load("Microsoft.CodeAnalysis.Features"));
+        }
+        catch { /* Ignore if not found, but it likely won't work well without them */ }
+        
+        // Add default assemblies as well
+        var allAssemblies = MefHostServices.DefaultAssemblies.Concat(assemblies).Distinct();
+
+        var host = MefHostServices.Create(allAssemblies);
         _workspace = new AdhocWorkspace(host);
 
         BuildReferences(workspacePath, additionalReferences);
-
+        
+        // Project initialization...
         var projectInfo = ProjectInfo.Create(
             ProjectId.CreateNewId(),
             VersionStamp.Create(),
@@ -40,7 +58,8 @@ public class RoslynIntelliSenseService
             "ScriptProject",
             LanguageNames.CSharp,
             compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-                .WithNullableContextOptions(NullableContextOptions.Enable),
+                .WithNullableContextOptions(NullableContextOptions.Enable)
+                .WithUsings("System", "System.Collections.Generic", "System.Linq", "System.Text", "System.Threading.Tasks", "ProtoTestTool.ScriptContract"),
             parseOptions: new CSharpParseOptions(LanguageVersion.Latest),
             metadataReferences: _references);
 
@@ -55,31 +74,52 @@ public class RoslynIntelliSenseService
         _references.Clear();
         var addedAssemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // 1. Core Framework Assemblies (Essential for basic Types)
+        var coreTypes = new[]
+        {
+            typeof(object), // System.Private.CoreLib
+            typeof(Uri), // System.Private.Uri
+            typeof(Console), // System.Console
+            typeof(System.Linq.Enumerable), // System.Linq
+            typeof(System.Collections.Generic.List<>), // System.Collections
+        };
+
+        foreach (var type in coreTypes)
+        {
+            AddReference(type.Assembly.Location, addedAssemblies);
+        }
+
+        // 2. Try TRUSTED_PLATFORM_ASSEMBLIES
         var trustedAssemblies = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
         if (!string.IsNullOrEmpty(trustedAssemblies))
         {
             foreach (var path in trustedAssemblies.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
-                var name = Path.GetFileNameWithoutExtension(path);
-                if (addedAssemblies.Contains(name)) continue;
-
-                try
-                {
-                    _references.Add(MetadataReference.CreateFromFile(path));
-                    addedAssemblies.Add(name);
-                }
-                catch { }
+                AddReference(path, addedAssemblies);
             }
         }
 
-        AddReference(typeof(Google.Protobuf.IMessage).Assembly.Location, addedAssemblies);
-        AddReference(typeof(ScriptContract.ScriptGlobals).Assembly.Location, addedAssemblies);
+        // 3. AppDomain Fallback (Catch-all for runtime assemblies)
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (asm.IsDynamic || string.IsNullOrEmpty(asm.Location)) continue;
+            // Filter out obviously irrelevant assemblies if needed, but for now include all
+            AddReference(asm.Location, addedAssemblies);
+        }
 
+        // 4. Explicit Application Dependencies (The Fix for ScriptGlobals)
+        // Ensure the main application assembly is referenced so scripts can see ScriptGlobals, etc.
+        // typeof(App) is in ProtoTestTool
+        AddReference(typeof(App).Assembly.Location, addedAssemblies); 
+        AddReference(typeof(ScriptContract.ScriptGlobals).Assembly.Location, addedAssemblies);
+        AddReference(typeof(Google.Protobuf.IMessage).Assembly.Location, addedAssemblies);
+
+        // 5. Workspace Protos
         var protosDll = Path.Combine(workspacePath, "Protos.dll");
         if (File.Exists(protosDll))
             AddReference(protosDll, addedAssemblies);
 
+        // 6. Additional References (Libs)
         if (additionalReferences != null)
         {
             foreach (var refPath in additionalReferences)
@@ -93,6 +133,9 @@ public class RoslynIntelliSenseService
     private void AddReference(string path, HashSet<string> added)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        
+        // Use full path as key to allow multiple versions of same assembly name if needed,
+        // but for now, simple name check is enough to avoid obvious dupes.
         var name = Path.GetFileNameWithoutExtension(path);
         if (added.Contains(name)) return;
 
@@ -101,7 +144,20 @@ public class RoslynIntelliSenseService
             _references.Add(MetadataReference.CreateFromFile(path));
             added.Add(name);
         }
-        catch { }
+        catch
+        {
+            // Fallback: Read into memory if file is locked
+            try
+            {
+                var bytes = File.ReadAllBytes(path);
+                using var stream = new MemoryStream(bytes);
+                // CreateFromStream reads metadata immediately
+                var reference = MetadataReference.CreateFromStream(stream); 
+                _references.Add(reference);
+                added.Add(name);
+            }
+            catch { /* Give up */ }
+        }
     }
 
     public void UpdateDocument(string fileName, string content)
@@ -156,7 +212,8 @@ public class RoslynIntelliSenseService
             var completions = await completionService.GetCompletionsAsync(document, position);
             if (completions == null) return result;
 
-            foreach (var item in completions.ItemsList.Take(100))
+            // Increase limit to avoid cutting off valid suggestions when filtering hasn't narrowed down enough yet.
+            foreach (var item in completions.ItemsList)
             {
                 result.Add(new CompletionItemDto
                 {
@@ -229,21 +286,76 @@ public class RoslynIntelliSenseService
             if (invocation == null) return null;
 
             var symbolInfo = semanticModel.GetSymbolInfo(invocation.Expression);
-            var methodSymbol = symbolInfo.Symbol as IMethodSymbol
-                ?? symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            var bestMatch = symbolInfo.Symbol as IMethodSymbol;
 
-            if (methodSymbol == null) return null;
+            // Get all overloads
+            var candidates = semanticModel.GetMemberGroup(invocation.Expression).OfType<IMethodSymbol>().ToList();
 
-            return new SignatureHelpDto
+            if (!candidates.Any())
             {
-                Label = methodSymbol.ToDisplayString(),
-                Documentation = methodSymbol.GetDocumentationCommentXml() ?? "",
-                Parameters = methodSymbol.Parameters.Select(p => new ParameterDto
+                if (bestMatch != null)
                 {
-                    Label = $"{p.Type.ToDisplayString()} {p.Name}",
-                    Documentation = ""
-                }).ToList()
-            };
+                    candidates.Add(bestMatch);
+                }
+                else
+                {
+                    candidates.AddRange(symbolInfo.CandidateSymbols.OfType<IMethodSymbol>());
+                }
+            }
+
+            // Deduplicate
+            candidates = candidates.Distinct(SymbolEqualityComparer.Default).Cast<IMethodSymbol>().ToList();
+
+            if (!candidates.Any()) return null;
+
+            var dto = new SignatureHelpDto();
+            dto.ActiveSignature = 0;
+            dto.ActiveParameter = 0; // Ideally calculate based on argument count/position
+
+            // Determine active signature index
+            if (bestMatch != null)
+            {
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (SymbolEqualityComparer.Default.Equals(candidates[i], bestMatch))
+                    {
+                        dto.ActiveSignature = i;
+                        break;
+                    }
+                }
+            }
+
+            foreach (var methodSymbol in candidates)
+            {
+                dto.Signatures.Add(new SignatureItemDto
+                {
+                    Label = methodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                    Documentation = methodSymbol.GetDocumentationCommentXml() ?? "", // Simplified doc extraction
+                    Parameters = methodSymbol.Parameters.Select(p => new ParameterDto
+                    {
+                        Label = $"{p.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)} {p.Name}",
+                        Documentation = ""
+                    }).ToList()
+                });
+            }
+
+            // Calculate active parameter (naive implementation)
+            // Count commas before caret inside argument list
+            var argList = invocation.ArgumentList;
+            if (argList != null)
+            {
+                // Simple count of arguments before position? 
+                // A bit complex to do perfectly, assuming 0 for now or last arg.
+                // If cursor is inside args, count distinct params
+                int paramIndex = 0;
+                foreach(var arg in argList.Arguments)
+                {
+                     if (arg.Span.End < position) paramIndex++;
+                }
+                dto.ActiveParameter = paramIndex;
+            }
+
+            return dto;
         }
         catch { }
 
@@ -643,6 +755,13 @@ public class DiagnosticDto
 }
 
 public class SignatureHelpDto
+{
+    public List<SignatureItemDto> Signatures { get; set; } = [];
+    public int ActiveSignature { get; set; }
+    public int ActiveParameter { get; set; }
+}
+
+public class SignatureItemDto
 {
     public string Label { get; set; } = "";
     public string Documentation { get; set; } = "";

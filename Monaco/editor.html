@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monaco Editor</title>
     <style>
-        html, body {
+        html,
+        body {
             height: 100%;
             margin: 0;
             padding: 0;
@@ -80,7 +81,7 @@
 
             // ========== Completion Provider ==========
             monaco.languages.registerCompletionItemProvider('csharp', {
-                triggerCharacters: ['.', ' '],
+                triggerCharacters: ['.', ' ', ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'],
                 provideCompletionItems: (model, position) => {
                     const offset = model.getOffsetAt(position);
                     return new Promise((resolve) => {
@@ -206,7 +207,7 @@
                         });
                         setTimeout(() => {
                             if (codeActionsResolve) {
-                                codeActionsResolve({ actions: [], dispose: () => {} });
+                                codeActionsResolve({ actions: [], dispose: () => { } });
                                 codeActionsResolve = null;
                             }
                         }, 3000);
@@ -257,7 +258,7 @@
                 },
                 resolveRenameLocation: (model, position) => {
                     const word = model.getWordAtPosition(position);
-                    if (!word) return { range: new monaco.Range(1,1,1,1), text: '', rejectReason: 'No symbol found' };
+                    if (!word) return { range: new monaco.Range(1, 1, 1, 1), text: '', rejectReason: 'No symbol found' };
                     return {
                         range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
                         text: word.word
@@ -512,21 +513,23 @@
 
         function setSignatureHelp(data) {
             if (signatureResolve) {
-                if (data && data.label) {
+                if (data && data.signatures && data.signatures.length > 0) {
+                    const signatures = data.signatures.map(s => ({
+                        label: s.label,
+                        documentation: s.documentation || '',
+                        parameters: (s.parameters || []).map(p => ({
+                            label: p.label,
+                            documentation: p.documentation || ''
+                        }))
+                    }));
+
                     signatureResolve({
                         value: {
-                            signatures: [{
-                                label: data.label,
-                                documentation: data.documentation || '',
-                                parameters: (data.parameters || []).map(p => ({
-                                    label: p.label,
-                                    documentation: p.documentation || ''
-                                }))
-                            }],
-                            activeSignature: 0,
-                            activeParameter: 0
+                            signatures: signatures,
+                            activeSignature: data.activeSignature || 0,
+                            activeParameter: data.activeParameter || 0
                         },
-                        dispose: () => {}
+                        dispose: () => { }
                     });
                 } else {
                     signatureResolve(null);
@@ -638,9 +641,9 @@
                         }
                     });
 
-                    codeActionsResolve({ actions, dispose: () => {} });
+                    codeActionsResolve({ actions, dispose: () => { } });
                 } else {
-                    codeActionsResolve({ actions: [], dispose: () => {} });
+                    codeActionsResolve({ actions: [], dispose: () => { } });
                 }
                 codeActionsResolve = null;
             }

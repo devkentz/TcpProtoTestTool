@@ -683,6 +683,12 @@ namespace ProtoTestTool
             }
         }
 
+        // JSON Options for CamelCase (Critical for JS interop)
+        private readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
         private async Task HandleCompletionRequestAsync(JsonElement root, string fileName)
         {
             if (_intelliSense == null) return;
@@ -690,7 +696,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var completions = await _intelliSense.GetCompletionsAsync(fileName, position);
-            var jsonResult = JsonSerializer.Serialize(completions);
+            var jsonResult = JsonSerializer.Serialize(completions, _jsonOptions);
             await EditorWebView.ExecuteScriptAsync($"setCompletions({jsonResult})");
         }
 
@@ -701,7 +707,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var signatureHelp = await _intelliSense.GetSignatureHelpAsync(fileName, position);
-            var jsonResult = signatureHelp != null ? JsonSerializer.Serialize(signatureHelp) : "null";
+            var jsonResult = signatureHelp != null ? JsonSerializer.Serialize(signatureHelp, _jsonOptions) : "null";
             await EditorWebView.ExecuteScriptAsync($"setSignatureHelp({jsonResult})");
         }
 
@@ -711,7 +717,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var diagnostics = await _intelliSense.GetDiagnosticsAsync(fileName);
-            var jsonResult = JsonSerializer.Serialize(diagnostics);
+            var jsonResult = JsonSerializer.Serialize(diagnostics, _jsonOptions);
             await EditorWebView.ExecuteScriptAsync($"setDiagnostics({jsonResult})");
 
             // Update status bar diagnostics count
@@ -730,7 +736,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var hover = await _intelliSense.GetHoverAsync(fileName, position);
-            var jsonResult = hover != null ? JsonSerializer.Serialize(hover) : "null";
+            var jsonResult = hover != null ? JsonSerializer.Serialize(hover, _jsonOptions) : "null";
             await EditorWebView.ExecuteScriptAsync($"setHover({jsonResult})");
         }
 
@@ -741,7 +747,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var definition = await _intelliSense.GetDefinitionAsync(fileName, position);
-            var jsonResult = definition != null ? JsonSerializer.Serialize(definition) : "null";
+            var jsonResult = definition != null ? JsonSerializer.Serialize(definition, _jsonOptions) : "null";
             await EditorWebView.ExecuteScriptAsync($"setDefinition({jsonResult})");
         }
 
@@ -752,7 +758,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var references = await _intelliSense.GetReferencesAsync(fileName, position);
-            var jsonResult = JsonSerializer.Serialize(references);
+            var jsonResult = JsonSerializer.Serialize(references, _jsonOptions);
             await EditorWebView.ExecuteScriptAsync($"setReferences({jsonResult})");
         }
 
@@ -764,7 +770,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var actions = await _intelliSense.GetCodeActionsAsync(fileName, startPos, endPos);
-            var jsonResult = JsonSerializer.Serialize(actions);
+            var jsonResult = JsonSerializer.Serialize(actions, _jsonOptions);
             await EditorWebView.ExecuteScriptAsync($"setCodeActions({jsonResult})");
         }
 
@@ -777,7 +783,7 @@ namespace ProtoTestTool
             var result = await _intelliSense.ApplyCodeActionAsync(fileName, actionIndex);
             if (result != null)
             {
-                var safeContent = JsonSerializer.Serialize(result.NewContent);
+                var safeContent = JsonSerializer.Serialize(result.NewContent, _jsonOptions);
                 await EditorWebView.ExecuteScriptAsync($"setContent({safeContent})");
             }
         }
@@ -788,7 +794,7 @@ namespace ProtoTestTool
             var content = root.GetProperty("content").GetString() ?? "";
             _intelliSense.UpdateDocument(fileName, content);
             var edits = await _intelliSense.FormatDocumentAsync(fileName);
-            var jsonResult = JsonSerializer.Serialize(edits);
+            var jsonResult = JsonSerializer.Serialize(edits, _jsonOptions);
             await EditorWebView.ExecuteScriptAsync($"setFormatting({jsonResult})");
         }
 
@@ -879,14 +885,7 @@ namespace ProtoTestTool
             }
         }
 
-        // ========== Public API (Legacy Compatibility) ==========
 
-        public Task UpdateCompletionsAsync(string json) => Task.CompletedTask;
-
-        public async Task RefreshIntelliSenseAsync()
-        {
-            await InitializeIntelliSenseAsync();
-        }
 
         // ========== Logging ==========
 

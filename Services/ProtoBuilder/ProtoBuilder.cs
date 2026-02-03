@@ -85,10 +85,6 @@ namespace ProtoTestTool.Services.ProtoBuilder
 
                     // Load Protos.dll
                     var assembly = _contextManager.LoadProtoAssembly(outputDll);
-
-                    logAction($"\n[Manager] Protos.dll updated ({ProtoLoaderManager.Instance.PacketsByName.Count} messages)");
-                    appendLog($"[Proto] Loaded {ProtoLoaderManager.Instance.PacketsByName.Count} message types", Brushes.Green);
-
                     return assembly;
                 }
                 else
