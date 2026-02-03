@@ -11,8 +11,10 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         
-        <TextBlock Text="Active Interceptors" FontSize="12" FontWeight="Bold" Margin="0,0,0,5" 
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        <Grid>
+             <TextBlock Text="Active Interceptors" FontSize="12" FontWeight="Bold" Margin="0,0,0,5" 
+                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+        </Grid>
 
         <ListBox x:Name="InterceptorList" Grid.Row="1" SelectionMode="Multiple"
                  BorderThickness="1" BorderBrush="{DynamicResource PanelBorderBrush}" Background="{DynamicResource BgBrush}">

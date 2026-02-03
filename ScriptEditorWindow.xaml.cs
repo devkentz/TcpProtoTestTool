@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
+using ProtoTestTool.Controls;
 using ProtoTestTool.Services;
 
 namespace ProtoTestTool
@@ -76,6 +77,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"Initialization failed: {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("ScriptEditorWindow.InitializeEditorAsync failed", ex);
                 LoadingText.Text = $"Error: {ex.Message}";
             }
         }
@@ -97,6 +99,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"IntelliSense init failed: {ex.Message}", Brushes.Orange);
+                FileLogger.Instance.Error("InitializeIntelliSenseAsync failed", ex);
             }
         }
 
@@ -274,13 +277,13 @@ namespace ProtoTestTool
         private void AddInterceptorToSidebar(string fileName)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition {Width = new GridLength(1, GridUnitType.Star)});
+            grid.ColumnDefinitions.Add(new ColumnDefinition {Width = GridLength.Auto});
 
             var itemBtn = new Button
             {
                 Tag = fileName,
-                Style = (Style)FindResource("SidebarItemStyle"),
+                Style = (Style) FindResource("SidebarItemStyle"),
                 Content = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
@@ -295,7 +298,7 @@ namespace ProtoTestTool
                             Margin = new Thickness(0, 0, 6, 0),
                             VerticalAlignment = VerticalAlignment.Center
                         },
-                        new TextBlock { Text = Path.GetFileNameWithoutExtension(fileName) }
+                        new TextBlock {Text = Path.GetFileNameWithoutExtension(fileName)}
                     }
                 }
             };
@@ -306,7 +309,7 @@ namespace ProtoTestTool
             {
                 Tag = fileName,
                 Content = "\u2715",
-                Style = (Style)FindResource("DeleteBtnStyle")
+                Style = (Style) FindResource("DeleteBtnStyle")
             };
             deleteBtn.Click += DeleteInterceptor_Click;
             Grid.SetColumn(deleteBtn, 1);
@@ -330,13 +333,13 @@ namespace ProtoTestTool
                 Padding = new Thickness(0)
             };
 
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            var sp = new StackPanel {Orientation = Orientation.Horizontal};
 
             var radio = new RadioButton
             {
                 Content = Path.GetFileNameWithoutExtension(fileName),
                 Tag = fileName,
-                Style = (Style)FindResource("InterceptorTabStyle"),
+                Style = (Style) FindResource("InterceptorTabStyle"),
                 GroupName = "InterceptorTabs"
             };
             radio.Checked += InterceptorTab_Checked;
@@ -345,7 +348,7 @@ namespace ProtoTestTool
             {
                 Content = "\u2715",
                 Tag = fileName,
-                Style = (Style)FindResource("TabCloseBtnStyle"),
+                Style = (Style) FindResource("TabCloseBtnStyle"),
                 Margin = new Thickness(0, 0, 4, 0)
             };
             closeBtn.Click += TabClose_Click;
@@ -410,6 +413,7 @@ namespace ProtoTestTool
                         return;
                     }
                 }
+
                 // Fall back to first core script
                 _ = SwitchToFileAsync(CoreScripts[0]);
             }
@@ -417,89 +421,88 @@ namespace ProtoTestTool
 
         // ========== Add Interceptor ==========
 
-        private void AddInterceptor_Click(object sender, RoutedEventArgs e)
+        private async void AddInterceptor_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.ContextMenu != null)
+            var dialog = new InputNameDialog {Owner = this};
+            if (dialog.ShowDialog() == true)
             {
-                btn.ContextMenu.PlacementTarget = btn;
-                btn.ContextMenu.IsOpen = true;
-            }
-        }
+                var name = dialog.ResponseText?.Trim();
+                if (string.IsNullOrEmpty(name)) return;
 
-        private async void AddInterceptorType_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not MenuItem item || item.Tag == null) return;
-            var type = item.Tag.ToString()!;
-
-            var baseName = $"{type}Interceptor";
-            var fileName = $"{baseName}.cs";
-            var counter = 1;
-            while (_fileContents.ContainsKey(fileName))
-            {
-                fileName = $"{baseName}{counter++}.cs";
-            }
-
-            var className = Path.GetFileNameWithoutExtension(fileName);
-            var template = GenerateInterceptorTemplate(className);
-
-            var filePath = Path.Combine(_workspacePath, fileName);
-            await File.WriteAllTextAsync(filePath, template);
-
-            _fileContents[fileName] = template;
-            _intelliSense?.UpdateDocument(fileName, template);
-
-            AddInterceptorToSidebar(fileName);
-            AddInterceptorTab(fileName);
-            UpdateTabStripVisibility();
-
-            // Switch to the new file and select its tab
-            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
-            {
-                var sp = tabBorder.Child as StackPanel;
-                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                if (radio != null && radio.Tag?.ToString() == fileName)
+                // Basic validation
+                if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z_][a-zA-Z0-9_]*$"))
                 {
-                    radio.IsChecked = true;
-                    break;
+                    MessageBox.Show("Invalid class name. Use alphanumeric characters, starting with a letter or underscore.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var fileName = $"{name}.cs";
+                var filePath = Path.Combine(_workspacePath, fileName);
+
+                if (File.Exists(filePath))
+                {
+                    MessageBox.Show($"File '{fileName}' already exists.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                try
+                {
+                    var template = ScriptTemplateFactory.GetTemplate("PacketInterceptor", name);
+                    await File.WriteAllTextAsync(filePath, template);
+
+                    _fileContents[fileName] = template;
+                    _intelliSense?.UpdateDocument(fileName, template);
+
+                    AddInterceptorToSidebar(fileName);
+                    AddInterceptorTab(fileName);
+                    UpdateTabStripVisibility();
+
+                    // Switch to the new file
+                    await SwitchToFileAsync(fileName);
+
+                    // Select tab
+                    foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+                    {
+                        var sp = tabBorder.Child as StackPanel;
+                        var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
+                        if (radio != null && radio.Tag?.ToString() == fileName)
+                        {
+                            radio.IsChecked = true;
+                            break;
+                        }
+                    }
+
+                    AppendLog($"Created {fileName}", Brushes.Green);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to create file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
-
-            AppendLog($"Created {fileName}", Brushes.Green);
         }
 
-        private static string GenerateInterceptorTemplate(string className) =>
-$@"using System;
-using System.Threading.Tasks;
-using ProtoTestTool.ScriptContract;
-
-public class {className} : IPacketInterceptor
-{{
-    public ValueTask OnOutboundAsync(PacketContext context)
-    {{
-        return ValueTask.CompletedTask;
-    }}
-
-    public ValueTask OnInboundAsync(PacketContext context)
-    {{
-        return ValueTask.CompletedTask;
-    }}
-}}";
 
         // ========== Delete Interceptor ==========
 
         private async void DeleteInterceptor_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button btn || btn.Tag == null) return;
+            if (sender is not Button btn || btn.Tag == null)
+                return;
+
             var fileName = btn.Tag.ToString()!;
 
             var result = MessageBox.Show($"Delete {fileName}?", "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (result != MessageBoxResult.Yes) return;
+            if (result != MessageBoxResult.Yes)
+                return;
 
             // Delete file from disk
             var filePath = Path.Combine(_workspacePath, fileName);
             if (File.Exists(filePath))
             {
-                try { File.Delete(filePath); }
+                try
+                {
+                    File.Delete(filePath);
+                }
                 catch (Exception ex)
                 {
                     AppendLog($"Delete failed: {ex.Message}", Brushes.Red);
@@ -516,6 +519,8 @@ public class {className} : IPacketInterceptor
             // Switch to another file if this was active
             if (_activeFileName == fileName)
             {
+                _activeFileName = null;
+
                 var firstInterceptor = _fileContents.Keys.FirstOrDefault(f => !CoreScripts.Contains(f));
                 await SwitchToFileAsync(firstInterceptor ?? CoreScripts[0]);
             }
@@ -608,7 +613,8 @@ public class {className} : IPacketInterceptor
             }
             catch (Exception ex)
             {
-                AppendLog($"Build Error: {ex.Message}", Brushes.Red);
+                AppendLog($"Build Error: {ex}", Brushes.Red);
+                FileLogger.Instance.Error("BuildBtn_Click failed", ex);
                 StatusText.Text = "Error";
             }
             finally
@@ -622,7 +628,7 @@ public class {className} : IPacketInterceptor
         private void PackagesBtn_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_workspacePath)) return;
-            var window = new NuGetWindow(_workspacePath) { Owner = this };
+            var window = new NuGetWindow(_workspacePath) {Owner = this};
             window.ShowDialog();
         }
 
@@ -871,7 +877,13 @@ public class {className} : IPacketInterceptor
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            try { EditorWebView.Dispose(); } catch { }
+            try
+            {
+                EditorWebView.Dispose();
+            }
+            catch
+            {
+            }
         }
 
         // ========== Public API (Legacy Compatibility) ==========

@@ -17,7 +17,7 @@ namespace ProtoTestTool
     public class NuGetClient
     {
         private readonly HttpClient _httpClient;
-        
+
         public NuGetClient()
         {
             _httpClient = new HttpClient();
@@ -29,7 +29,7 @@ namespace ProtoTestTool
             {
                 var url = $"https://azuresearch-usnc.nuget.org/query?q={Uri.EscapeDataString(query)}&take={take}&prerelease=false";
                 var json = await _httpClient.GetStringAsync(url);
-                
+
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
                 if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
@@ -47,6 +47,7 @@ namespace ProtoTestTool
                         };
                         results.Add(info);
                     }
+
                     return results;
                 }
             }
@@ -54,6 +55,7 @@ namespace ProtoTestTool
             {
                 System.Diagnostics.Debug.WriteLine($"NuGet Search Error: {ex.Message}");
             }
+
             return new List<NuGetPackageInfo>();
         }
 
@@ -66,7 +68,7 @@ namespace ProtoTestTool
             var url = $"https://api.nuget.org/v3-flatcontainer/{lowerId}/{lowerVer}/{lowerId}.{lowerVer}.nupkg";
 
             var nupkgData = await _httpClient.GetByteArrayAsync(url);
-            
+
             // 2. Extract to Libs (workspacePath is already Scripts folder)
             var libsDir = Path.Combine(workspacePath, "Libs");
             Directory.CreateDirectory(libsDir);
@@ -76,7 +78,7 @@ namespace ProtoTestTool
 
             // Strategy: Find best "lib/" folder.
             // Priority: net9.0 > net8.0 > net7.0 > net6.0 > netstandard2.1 > netstandard2.0
-            
+
             var libEntries = archive.Entries
                 .Where(e => e.FullName.StartsWith("lib/") && e.Name.EndsWith(".dll"))
                 .ToList();
@@ -84,7 +86,7 @@ namespace ProtoTestTool
             if (!libEntries.Any()) return; // No DLLs?
 
             // Group by TFM
-            var tfmGroups = libEntries.GroupBy(e => 
+            var tfmGroups = libEntries.GroupBy(e =>
             {
                 var parts = e.FullName.Split('/');
                 if (parts.Length > 1) return parts[1];
@@ -92,7 +94,7 @@ namespace ProtoTestTool
             }).ToList();
 
             string? bestTfm = SelectBestTfm(tfmGroups.Select(g => g.Key));
-            if (bestTfm == null) 
+            if (bestTfm == null)
             {
                 // Fallback to any?
                 throw new Exception("No compatible framework found (net6.0+ or netstandard2.0+)");
@@ -146,6 +148,7 @@ namespace ProtoTestTool
                     BuildDownloads = 0
                 });
             }
+
             return results;
         }
 
@@ -162,11 +165,12 @@ namespace ProtoTestTool
         private string? SelectBestTfm(IEnumerable<string> tfms)
         {
             // Simple priority matching
-            var priorities = new[] { "net9.0", "net8.0", "net7.0", "net6.0", "netstandard2.1", "netstandard2.0" };
+            var priorities = new[] {"net9.0", "net8.0", "net7.0", "net6.0", "netstandard2.1", "netstandard2.0"};
             foreach (var p in priorities)
             {
                 if (tfms.Contains(p, StringComparer.OrdinalIgnoreCase)) return p;
             }
+
             return null;
         }
     }

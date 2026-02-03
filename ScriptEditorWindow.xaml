@@ -200,13 +200,7 @@
                             <Button x:Name="AddInterceptorBtn" Grid.Column="1" Content="+" FontSize="14" FontWeight="Bold"
                                     Background="Transparent" Foreground="#808080" BorderThickness="0" Padding="6,0"
                                     Cursor="Hand" ToolTip="Add Interceptor" Click="AddInterceptor_Click">
-                                <Button.ContextMenu>
-                                    <ContextMenu x:Name="AddInterceptorMenu">
-                                        <MenuItem Header="Proxy Interceptor" Tag="Proxy" Click="AddInterceptorType_Click"/>
-                                        <MenuItem Header="Client Interceptor" Tag="Client" Click="AddInterceptorType_Click"/>
-                                        <MenuItem Header="Replay Interceptor" Tag="Replay" Click="AddInterceptorType_Click"/>
-                                    </ContextMenu>
-                                </Button.ContextMenu>
+
                             </Button>
                         </Grid>
                         <StackPanel x:Name="InterceptorListPanel"/>

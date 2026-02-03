@@ -34,6 +34,49 @@
     <SolidColorBrush x:Key="StatusReadyBrush" Color="#22c55e"/> 
     <SolidColorBrush x:Key="ButtonPrimaryBackground" Color="{StaticResource AccentColor}"/>
 
+    <!-- ToggleButton Style (REC buttons) -->
+    <Style TargetType="ToggleButton">
+        <Setter Property="Background" Value="#333333"/>
+        <Setter Property="Foreground" Value="#FF5555"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Border" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="#662222"/>
+                            <Setter TargetName="Border" Property="BorderBrush" Value="#FF5555"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="#444444"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsChecked" Value="True"/>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Border" Property="Background" Value="#773333"/>
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Foreground" Value="#555555"/>
+                            <Setter Property="BorderBrush" Value="#444444"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- GridSplitter Style -->
     <Style TargetType="GridSplitter">
         <Setter Property="Background" Value="#2D2D30"/>
@@ -74,18 +117,18 @@
     </Style>
     
     <Style TargetType="Button">
-        <Setter Property="Background" Value="#333333"/>
+        <Setter Property="Background" Value="{StaticResource PanelBorderBrush}"/>
         <Setter Property="Foreground" Value="White"/>
-        <Setter Property="BorderBrush" Value="#555555"/>
+        <Setter Property="BorderBrush" Value="{StaticResource InputStrokeBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="12,6"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}" 
-                            BorderBrush="{TemplateBinding BorderBrush}" 
-                            BorderThickness="{TemplateBinding BorderThickness}" 
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
                             CornerRadius="4">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
@@ -95,7 +138,7 @@
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Background" Value="Transparent"/>
-                            <Setter Property="Foreground" Value="#555555"/>
+                            <Setter Property="Foreground" Value="{StaticResource InputStrokeBrush}"/>
                             <Setter Property="BorderBrush" Value="#444444"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
@@ -105,9 +148,9 @@
     </Style>
 
     <Style TargetType="TextBox">
-        <Setter Property="Background" Value="#1E1E1E"/>
+        <Setter Property="Background" Value="{StaticResource BgBrush}"/>
         <Setter Property="Foreground" Value="White"/>
-        <Setter Property="BorderBrush" Value="#3F3F46"/>
+        <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="5,3"/>
         <Setter Property="Template">
@@ -132,7 +175,7 @@
     <!-- Pill Tab Style -->
     <Style TargetType="TabItem">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="#CCCCCC"/>
+        <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="Padding" Value="12,6"/>
         <Setter Property="Margin" Value="0,0,5,0"/>

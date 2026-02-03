@@ -4,14 +4,14 @@ namespace ProtoTestTool.Services
 {
     public static class ScriptTemplateFactory
     {
-        public static string GetTemplate(string featureName)
+        public static string GetTemplate(string featureName, string className = "MyInterceptor")
         {
             return featureName switch
             {
                 "PacketHeader" => GetPacketHeaderTemplate(),
                 "PacketCodec" => GetPacketCodecTemplate(),
                 "PacketRegistry" => GetPacketRegistryTemplate(),
-                "PacketInterceptor" => GetInterceptorTemplate(),
+                "PacketInterceptor" => GetInterceptorTemplate(className),
                 _ => "// Not found"
             };
         }
@@ -88,32 +88,32 @@ public class PacketRegistry : IPacketRegistry
     public MessageParser GetParserById(int msgId) => _parsers[msgId];
 }";
 
-        public static string GetInterceptorTemplate() =>
-@"using System;
+        public static string GetInterceptorTemplate(string className) =>
+$@"using System;
 using System.Threading.Tasks;
 using ProtoTestTool.ScriptContract;
 
 // [Optional] Unified Packet Interception Logic
 // Works for Manual Send, Proxy, and Replay (Server <-> Client)
-public class MyInterceptor : IPacketInterceptor
-{
+public class {className} : IPacketInterceptor
+{{
     // [Manual Send / Proxy Request / Replay Request]
     // Called when a packet is going OUT to the Server.
     public ValueTask OnOutboundAsync(PacketContext context)
-    {
+    {{
         // Example: Inspect or Modify
-        // if (context.Packet is LoginReq req) { ... }
+        // if (context.Packet is LoginReq req) {{ ... }}
         return ValueTask.CompletedTask;
-    }
+    }}
 
     // [Proxy Response / Replay Response]
     // Called when a packet is coming IN from the Server.
     public ValueTask OnInboundAsync(PacketContext context)
-    {
+    {{
         // Example: Log or Drop
         // context.Drop = true; 
         return ValueTask.CompletedTask;
-    }
-}";
+    }}
+}}";
     }
 }

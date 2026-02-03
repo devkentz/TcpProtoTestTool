@@ -40,10 +40,6 @@ namespace ProtoTestTool
             {
                 logAction("Starting Compilation...", Brushes.White);
 
-                // Cleanup legacy build files
-                var legacyBuildFile = Path.Combine(scriptsDir, "PacketInterceptor.Build.cs");
-                if (File.Exists(legacyBuildFile)) File.Delete(legacyBuildFile);
-
                 // Collect Source Files
                 var scriptFiles = Directory.GetFiles(scriptsDir, "*.cs", SearchOption.TopDirectoryOnly);
                 if (scriptFiles.Length == 0)
@@ -66,6 +62,7 @@ namespace ProtoTestTool
                     catch (Exception ex)
                     {
                         System.Diagnostics.Debug.WriteLine($"[ScriptLoader] Failed to delete old DLL: {ex.Message}");
+                        FileLogger.Instance.Error("Failed to delete old Script.dll", ex);
                     }
                 }
 
@@ -114,6 +111,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 logAction($"Error:\n{ex}", Brushes.Red);
+                FileLogger.Instance.Error("CompileScriptsAsync failed", ex);
             }
         }
 
@@ -303,6 +301,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     Dispatcher.Invoke(() => AppendProxyLog($"Error starting proxy: {ex.Message}"));
+                    FileLogger.Instance.Error("StartProxyServerAsync failed", ex);
                     throw;
                 }
             });
@@ -345,6 +344,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     Dispatcher.Invoke(() => AppendLog($"[Error] Failed to create {fileName}: {ex.Message}", Brushes.Red));
+                    FileLogger.Instance.Error($"Failed to create {fileName}", ex);
                 }
             }
         }
@@ -387,6 +387,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"[Error] ReloadProto: {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("ReloadProtoBtn_Click failed", ex);
             }
         }
 
@@ -436,6 +437,7 @@ namespace ProtoTestTool
                     catch (Exception ex)
                     {
                         System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete {Path.GetFileName(f)}: {ex.Message}");
+                        FileLogger.Instance.Error($"Failed to delete old CS file: {Path.GetFileName(f)}", ex);
                     }
                 }
 
@@ -458,6 +460,7 @@ namespace ProtoTestTool
                 {
                     ProtoLogBox.Text += $"\n[Error] Proto compilation failed: {ex.Message}";
                     AppendLog($"[Proto Error] {ex.Message}", Brushes.Red);
+                    FileLogger.Instance.Error("Proto compilation failed", ex);
                     return;
                 }
 
@@ -493,6 +496,7 @@ namespace ProtoTestTool
                         catch (Exception ex)
                         {
                             System.Diagnostics.Debug.WriteLine($"[Proto] Failed to delete old Protos.dll: {ex.Message}");
+                            FileLogger.Instance.Error("Failed to delete old Protos.dll", ex);
                         }
                     }
 
@@ -564,6 +568,7 @@ namespace ProtoTestTool
             {
                 ProtoLogBox.Text += $"\n[Critical Error] {ex.Message}";
                 AppendLog($"[Proto Error] {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("ProcessProtosAsync critical error", ex);
             }
         }
 
@@ -610,6 +615,7 @@ namespace ProtoTestTool
             {
                 FluentMessageBox.ShowError($"프록시 시작 실패: {ex.Message}");
                 AppendProxyLog($"Start Failed: {ex.Message}");
+                FileLogger.Instance.Error("ProxyStartBtn_Click failed", ex);
             }
         }
 

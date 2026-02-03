@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using Newtonsoft.Json;
 using Microsoft.Web.WebView2.Core;
+using ProtoTestTool.Services;
 
 namespace ProtoTestTool.Controls
 {
@@ -76,7 +77,7 @@ namespace ProtoTestTool.Controls
                 if (!File.Exists(editorPath))
                 {
                     LoadingOverlay.Visibility = Visibility.Visible;
-                    ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[0]).Text = "Editor file missing";
+                    ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[1]).Text = "Editor file missing";
                     return;
                 }
 
@@ -131,12 +132,13 @@ namespace ProtoTestTool.Controls
                 else
                 {
                     // Timeout or failure
-                     ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[0]).Text = "Editor Timeout";
+                     ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[1]).Text = "Editor Timeout";
                 }
             }
             catch (Exception ex)
             {
-                 ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[0]).Text = $"Init Error: {ex.Message}";
+                 ((TextBlock)((StackPanel)LoadingOverlay.Child).Children[1]).Text = $"Init Error: {ex.Message}";
+                 FileLogger.Instance.Error("MonacoEditor.InitializeAsync failed", ex);
             }
         }
 

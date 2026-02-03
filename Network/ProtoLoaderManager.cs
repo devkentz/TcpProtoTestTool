@@ -1,8 +1,8 @@
 ﻿using System.Collections.Frozen;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using Google.Protobuf;
-
 using Google.Protobuf.Reflection;
 using ProtoTestTool.ScriptContract;
 
@@ -16,6 +16,13 @@ namespace ProtoTestTool.Network
         // Request -> Response 매핑
         public FrozenDictionary<string, string> RequestToResponse { get; private set; } = FrozenDictionary<string, string>.Empty;
         
+        private const string ProtoDllName = "Protos.dll";
+        private const string ProtoGenDirectory = "ProtoGen";
+
+        private static readonly string[] RequestSuffixes = ["Req", "Request"];
+        private static readonly string[] ResponseSuffixes = ["Res", "Response", "Ack"];
+        private static readonly string[] NotifySuffixes = ["Notify", "NotifyMsg", "Push"];
+
         private static readonly Lazy<ProtoLoaderManager> SInstance = new Lazy<ProtoLoaderManager>(() => new ProtoLoaderManager());
         public static ProtoLoaderManager Instance => SInstance.Value;
 
@@ -36,19 +43,19 @@ namespace ProtoTestTool.Network
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Proto compilation failed: {ex.Message}");
+                    Debug.WriteLine($"Proto compilation failed: {ex.Message}");
                     throw;
                 }
             }
 
             var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
             // Only load the specific Protos.dll
-            var dllFiles = Directory.GetFiles(baseDirectory, "Protos.dll", SearchOption.TopDirectoryOnly).ToList();
+            var dllFiles = Directory.GetFiles(baseDirectory, ProtoDllName, SearchOption.TopDirectoryOnly).ToList();
             
-            var protoGenDir = Path.Combine(baseDirectory, "ProtoGen");
+            var protoGenDir = Path.Combine(baseDirectory, ProtoGenDirectory);
             if (Directory.Exists(protoGenDir))
             {
-                dllFiles.AddRange(Directory.GetFiles(protoGenDir, "Protos.dll", SearchOption.TopDirectoryOnly));
+                dllFiles.AddRange(Directory.GetFiles(protoGenDir, ProtoDllName, SearchOption.TopDirectoryOnly));
             }
 
             // 이미 로드된 어셈블리 먼저 추가
@@ -69,16 +76,16 @@ namespace ProtoTestTool.Network
                     {
                         var assembly = Assembly.LoadFrom(dllPath);
                         assembliesByName[fullName] = assembly;
-                        Console.WriteLine($"Loaded: {assembly.GetName().Name}");
+                        Debug.WriteLine($"Loaded: {assembly.GetName().Name}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Skip: {Path.GetFileName(dllPath)} - {ex.Message}");
+                    Debug.WriteLine($"Skip: {Path.GetFileName(dllPath)} - {ex.Message}");
                 }
             }
 
-            Console.WriteLine($"\nTotal assemblies: {assembliesByName.Count}");
+            Debug.WriteLine($"\nTotal assemblies: {assembliesByName.Count}");
 
             // 2. IMessage 타입 수집 (한 번의 순회로)
             var allMessageTypes = assembliesByName.Values
@@ -86,7 +93,7 @@ namespace ProtoTestTool.Network
                 .SelectMany(assembly => GetMessageTypes(assembly))
                 .ToList();
 
-            Console.WriteLine($"Found {allMessageTypes.Count} proto messages\n");
+            Debug.WriteLine($"Found {allMessageTypes.Count} proto messages\n");
 
             // 3. 패킷 분류 및 Dictionary 생성
             var sendPacketsDict = new Dictionary<string, PacketConvertor>(StringComparer.OrdinalIgnoreCase);
@@ -97,21 +104,22 @@ namespace ProtoTestTool.Network
             foreach (var type in allMessageTypes)
             {
                 var name = type.Name;
-                var convertor = new PacketConvertor {Name = name, Type = type};
-                
+                var convertor = new PacketConvertor { Name = name, Type = type };
+
                 allPacketsDict[name] = convertor;
 
-                if (name.EndsWith("Req"))
+                var matchedReqSuffix = RequestSuffixes.FirstOrDefault(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase));
+                if (matchedReqSuffix != null)
                 {
                     sendPacketsDict[name] = convertor;
 
-                    // Request -> Response 매핑 생성
-                    // LoginReq -> LoginRes
-                    var baseName = name[..^3]; // "Req" 제거
-                    var responseName = baseName + "Res";
-                    reqToResMapping[name] = responseName;
+                    // Map Request -> Response (first matching response suffix)
+                    // e.g. LoginReq -> LoginRes
+                    var baseName = name[..^matchedReqSuffix.Length];
+                    reqToResMapping[name] = baseName + ResponseSuffixes[0];
                 }
-                else if (name.EndsWith("Res") || name.EndsWith("Notify") || name.EndsWith("NotifyMsg"))
+                else if (ResponseSuffixes.Any(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase)) ||
+                         NotifySuffixes.Any(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
                 {
                     receivePacketsDict[name] = convertor;
                 }
@@ -123,9 +131,9 @@ namespace ProtoTestTool.Network
             ReceivePackets = receivePacketsDict.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             RequestToResponse = reqToResMapping.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
-            Console.WriteLine($"Send packets: {SendPackets.Count}");
-            Console.WriteLine($"Receive packets: {ReceivePackets.Count}");
-            Console.WriteLine($"Request-Response pairs: {RequestToResponse.Count}");
+            Debug.WriteLine($"Send packets: {SendPackets.Count}");
+            Debug.WriteLine($"Receive packets: {ReceivePackets.Count}");
+            Debug.WriteLine($"Request-Response pairs: {RequestToResponse.Count}");
         }
 
         private static IEnumerable<Type> GetMessageTypes(Assembly assembly)
@@ -166,13 +174,17 @@ namespace ProtoTestTool.Network
         // Response에 대응하는 Request 찾기
         public PacketConvertor? GetRequestFor(string responseName)
         {
-            var requestName = responseName.EndsWith("Res")
-                ? responseName[..^3] + "Req"
-                : null;
-
-            if (requestName != null && SendPackets.TryGetValue(requestName, out var request))
+            foreach (var resSuffix in ResponseSuffixes)
             {
-                return request;
+                if (!responseName.EndsWith(resSuffix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var baseName = responseName[..^resSuffix.Length];
+                foreach (var reqSuffix in RequestSuffixes)
+                {
+                    if (SendPackets.TryGetValue(baseName + reqSuffix, out var request))
+                        return request;
+                }
             }
 
             return null;
@@ -180,14 +192,11 @@ namespace ProtoTestTool.Network
 
         public PacketConvertor? Find(string name) => PacketsByName.GetValueOrDefault(name);
 
-        public IReadOnlyList<PacketConvertor> GetSendPackets() 
+        public IReadOnlyList<PacketConvertor> GetSendPackets()
         {
-            // If user has defined specific Send packets, use them.
-            // Otherwise, fallback to showing all registered packets (Default behavior).
-            if (SendPackets != null && SendPackets.Count > 0)
-                return SendPackets.Values.ToList();
-                
-            return PacketsByName.Values.ToList();
+            return SendPackets.Count > 0
+                ? SendPackets.Values.ToList()
+                : PacketsByName.Values.ToList();
         }
         
         // Runtime Registration
@@ -195,10 +204,8 @@ namespace ProtoTestTool.Network
         {
             var name = type.Name;
             var convertor = new PacketConvertor { Name = name, Type = type };
-            
-            // Default only adds to generic lookup
-            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName ?? FrozenDictionary<string, PacketConvertor>.Empty);
-            newPackets[name] = convertor;
+
+            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName) { [name] = convertor };
             PacketsByName = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -228,24 +235,19 @@ namespace ProtoTestTool.Network
             _typeToId[type] = msgId;
 
             var name = msgName ?? type.Name;
-            
-            // 1. Generic Registration (Lookup by Name)
             var convertor = new PacketConvertor { Name = name, Type = type };
-            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName ?? FrozenDictionary<string, PacketConvertor>.Empty);
-            newPackets[name] = convertor;
+
+            var newPackets = new Dictionary<string, PacketConvertor>(PacketsByName) { [name] = convertor };
             PacketsByName = newPackets.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
-            // 2. Optional: Register as Send (Request) or Receive
             if (isRequest == true)
             {
-                var newSend = new Dictionary<string, PacketConvertor>(SendPackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
-                newSend[name] = convertor;
+                var newSend = new Dictionary<string, PacketConvertor>(SendPackets) { [name] = convertor };
                 SendPackets = newSend.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             }
-            else if (isRequest == false) 
+            else if (isRequest == false)
             {
-                var newRecv = new Dictionary<string, PacketConvertor>(ReceivePackets ?? FrozenDictionary<string, PacketConvertor>.Empty);
-                newRecv[name] = convertor;
+                var newRecv = new Dictionary<string, PacketConvertor>(ReceivePackets) { [name] = convertor };
                 ReceivePackets = newRecv.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
             }
         }

@@ -36,7 +36,15 @@ namespace ProtoTestTool
 
             Closing += MainWindow_Closing;
             ResponseHeaderGrid.ItemsSource = _responseHeaders;
+
+            // Hook Add Interceptor Events
+            Loaded += (s, e) =>
+            {
+                // No remaining hooks
+            };
         }
+
+
 
         private void OnConnected()
         {
@@ -92,6 +100,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     AppendLog($"Connection failed: {ex.Message}", Brushes.Red);
+                    FileLogger.Instance.Error("Connection failed", ex);
                     UpdateConnectionState(false);
                 }
             }
@@ -123,6 +132,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"[Error] Failed to load packet template: {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("PacketSelected failed", ex);
                 SendBtn.IsEnabled = false;
             }
         }
@@ -173,6 +183,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"[Send Error] {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("SendBtn_Click failed", ex);
             }
         }
 
@@ -266,6 +277,7 @@ namespace ProtoTestTool
         public MainWindow(string workspacePath) : this()
         {
             _workspacePath = workspacePath;
+            FileLogger.Instance.Init(_workspacePath);
             InitializeWorkspaceFiles(_workspacePath);
             UpdateWorkspaceUI();
 
@@ -298,6 +310,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 FluentMessageBox.ShowError($"Editor Init Failed: {ex.Message}");
+                FileLogger.Instance.Error("MainWindow_LoadedAsync failed", ex);
             }
 
             return Task.CompletedTask;
@@ -344,6 +357,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"[Config] Error loading config: {ex.Message}", Brushes.Orange);
+                FileLogger.Instance.Error("LoadWorkspaceConfiguration failed", ex);
             }
         }
 
@@ -362,6 +376,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 Dispatcher.Invoke(() => AppendLog($"[Init] Error: {ex.Message}", Brushes.Red));
+                FileLogger.Instance.Error("InitializeWorkspaceSequenceAsync failed", ex);
             }
             finally
             {
@@ -434,6 +449,7 @@ namespace ProtoTestTool
                 }
 
                 _workspacePath = dialog.SelectedPath;
+                FileLogger.Instance.Init(_workspacePath);
                 SaveWorkspaceSettings();
 
                 // Clear previous proto/script state
@@ -466,7 +482,11 @@ namespace ProtoTestTool
             if (ScriptGlobals.State is ScriptStateStore store)
             {
                 try { store.FlushToPersistent(); }
-                catch (Exception ex) { Debug.WriteLine($"[StateStore] Flush on close failed: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[StateStore] Flush on close failed: {ex.Message}");
+                    FileLogger.Instance.Error("StateStore flush on close failed", ex);
+                }
             }
         }
 
@@ -517,6 +537,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     Dispatcher.Invoke(() => AppendLog($"[Error] Proto Compile: {ex.Message}", Brushes.Red));
+                    FileLogger.Instance.Error("LoadProtosFromFolderAsync failed", ex);
                 }
             });
         }
@@ -534,6 +555,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"설정 저장 실패: {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("SaveWorkspaceSettings failed", ex);
             }
         }
 
@@ -656,12 +678,16 @@ namespace ProtoTestTool
                 ConnectToggleBtn.Content = "Disconnect";
                 ConnectToggleBtn.Appearance = Wpf.Ui.Controls.ControlAppearance.Secondary;
                 ConnectToggleBtn.Icon = new Wpf.Ui.Controls.SymbolIcon(Wpf.Ui.Controls.SymbolRegular.PlugDisconnected24);
+                StatusIndicator.Fill = (Brush)FindResource("SystemFillColorSuccessBrush");
+                ResponseStatusText.Text = "Connected";
             }
             else
             {
                 ConnectToggleBtn.Content = "Connect";
                 ConnectToggleBtn.Appearance = Wpf.Ui.Controls.ControlAppearance.Primary;
                 ConnectToggleBtn.Icon = new Wpf.Ui.Controls.SymbolIcon(Wpf.Ui.Controls.SymbolRegular.PlugConnected24);
+                StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0x88));
+                ResponseStatusText.Text = "";
             }
 
             SendBtn.IsEnabled = connected;
@@ -802,6 +828,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     AppendLog($"Decoder Error: {ex.Message}", Brushes.Red);
+                    FileLogger.Instance.Error("ProcessReceiveBuffer decoder error", ex);
                     _receiveBuffer.Clear();
                     break;
                 }
@@ -820,6 +847,11 @@ namespace ProtoTestTool
             };
             LogBox.Document.Blocks.Add(paragraph);
             LogBox.ScrollToEnd();
+        }
+
+        private void ClearLogBtn_Click(object sender, RoutedEventArgs e)
+        {
+            LogBox.Document.Blocks.Clear();
         }
 
         private void ScriptListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -882,6 +914,7 @@ namespace ProtoTestTool
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Failed to load recording: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    FileLogger.Instance.Error("LoadRecordingBtn_Click failed", ex);
                 }
             }
         }
@@ -936,6 +969,7 @@ namespace ProtoTestTool
             catch (Exception ex)
             {
                 AppendLog($"[Replay Error] {ex.Message}", Brushes.Red);
+                FileLogger.Instance.Error("ReplayAllBtn_Click failed", ex);
             }
             finally
             {

@@ -15,7 +15,8 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="220" MinWidth="160" />
+            <ColumnDefinition Width="5" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
@@ -25,7 +26,7 @@
         </Grid.RowDefinitions>
 
         <!-- 1. Title Bar with Header Content -->
-        <ui:TitleBar Grid.Row="0" Grid.ColumnSpan="2" Title="TCP Packet Lab" Height="46" Padding="10,0">
+        <ui:TitleBar Grid.Row="0" Grid.ColumnSpan="3" Title="TCP Packet Lab" Height="46" Padding="10,0">
             <ui:TitleBar.Header>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -103,8 +104,11 @@
             </Grid>
         </Border>
 
+        <!-- Sidebar Splitter -->
+        <GridSplitter Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+
         <!-- 3. Main Content -->
-        <Grid Grid.Row="1" Grid.Column="1" Margin="20">
+        <Grid Grid.Row="1" Grid.Column="2" Margin="20">
 
             <!-- VIEW 1: Test Client -->
             <Grid x:Name="ClientView">
@@ -136,12 +140,12 @@
 
                         <TextBlock Grid.Column="1" Text="Target:" VerticalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                        <ui:TextBox Grid.Column="2" x:Name="IpBox" Text="127.0.0.1" Width="140" Margin="5,0" />
+                        <ui:TextBox Grid.Column="2" x:Name="IpBox" Text="127.0.0.1" Width="140" Margin="5,0" TabIndex="0" />
                         <TextBlock Grid.Column="3" Text=":" VerticalAlignment="Center" />
-                        <ui:TextBox Grid.Column="4" x:Name="PortBox" Text="9000" Width="80" Margin="5,0" />
+                        <ui:TextBox Grid.Column="4" x:Name="PortBox" Text="9000" Width="80" Margin="5,0" TabIndex="1" />
 
                         <ui:Button Grid.Column="5" x:Name="ConnectToggleBtn" Content="Connect" Click="ConnectToggleBtn_Click"
-                                   Width="120" Margin="10,0" Appearance="Primary" Icon="PlugConnected24" />
+                                   Width="120" Margin="10,0" Appearance="Primary" Icon="PlugConnected24" TabIndex="2" />
 
                         <ui:Button Grid.Column="7" Content="Script Editor" Click="OpenScriptEditor_Click" Margin="0,0,10,0" Width="120"
                                    Icon="Code24" />
@@ -163,6 +167,7 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" /> <!-- Pipeline -->
+                                <RowDefinition Height="Auto" /> <!-- Interceptors -->
                                 <RowDefinition Height="*" />    <!-- Inspector -->
                             </Grid.RowDefinitions>
 
@@ -183,8 +188,6 @@
                                             <controls:PacketSelector x:Name="PacketSelectorControl" MinWidth="300"
                                                                      Width="400" Height="35" HorizontalAlignment="Left"
                                                                      PacketSelected="PacketSelectorControl_PacketSelected" />
-
-                                            <!-- Pipeline Hint -->
                                         </DockPanel>
                                     </StackPanel>
 
@@ -192,18 +195,16 @@
                                     <ui:Button x:Name="SendBtn" Grid.Column="1" Content="Send Packet" Width="140"
                                                Height="40" Click="SendBtn_Click" IsEnabled="False" Appearance="Primary"
                                                Icon="Send24" VerticalAlignment="Bottom" />
-                                    
-
                                 </Grid>
                             </ui:Card>
 
                             <!-- Interceptors for Manual Send -->
-                            <Expander Grid.Row="0" Grid.Column="0" Header="Interceptors" Padding="0" Margin="0,0,0,15" IsExpanded="False">
+                            <Expander Grid.Row="1" Header="Interceptors" Padding="0" Margin="0,0,0,15" IsExpanded="False">
                                 <controls:InterceptorSelector x:Name="ClientInterceptorSelector" Height="150" />
                             </Expander>
 
                             <!-- Inspector -->
-                            <Grid Grid.Row="1">
+                            <Grid Grid.Row="2">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="10" />
@@ -279,6 +280,7 @@
                         <Grid Margin="10">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
@@ -291,12 +293,13 @@
                                            Click="ReplayAllBtn_Click" />
                             </StackPanel>
 
-                            <Expander Header="Replay Interceptors" IsExpanded="False" Margin="0,0,0,10">
+                            <!-- Replay Interceptors -->
+                            <Expander Grid.Row="1" Header="Replay Interceptors" IsExpanded="False" Margin="0,0,0,10">
                                 <controls:InterceptorSelector x:Name="ReplayInterceptorSelector" Height="150" />
                             </Expander>
 
                             <!-- Content Split -->
-                            <Grid Grid.Row="1">
+                            <Grid Grid.Row="2">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" MinWidth="300" />
                                     <ColumnDefinition Width="5" />
@@ -359,7 +362,12 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <TextBlock Text="System Logs" Margin="15,10" FontWeight="Bold" />
+                        <DockPanel>
+                            <TextBlock Text="System Logs" Margin="15,10" FontWeight="Bold" />
+                            <ui:Button Icon="Delete24" Appearance="Secondary" Click="ClearLogBtn_Click"
+                                       ToolTip="Clear Logs" DockPanel.Dock="Right" Margin="0,0,10,0"
+                                       Padding="4,2" FontSize="11" />
+                        </DockPanel>
                         <RichTextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" FontFamily="Consolas"
                                      VerticalScrollBarVisibility="Auto" Background="Transparent"
                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}" BorderThickness="0"
@@ -465,11 +473,11 @@
         </Grid>
 
         <!-- 4. Status Bar -->
-        <Border Grid.Row="2" Grid.ColumnSpan="2" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+        <Border Grid.Row="2" Grid.ColumnSpan="3" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
                 BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
             <DockPanel LastChildFill="False" Margin="10,0">
                 <!-- Status Indicator -->
-                <Ellipse Width="8" Height="8" Fill="{DynamicResource SystemFillColorSuccessBrush}"
+                <Ellipse x:Name="StatusIndicator" Width="8" Height="8" Fill="{DynamicResource SystemFillColorSuccessBrush}"
                          VerticalAlignment="Center" Margin="0,0,6,0" />
                 <TextBlock Text="Ready" Foreground="{DynamicResource SystemFillColorSuccessBrush}"
                            VerticalAlignment="Center" />
