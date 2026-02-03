@@ -4,6 +4,7 @@ using System.Windows.Media;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using ProtoTestTool.Network;
+using ProtoTestTool.ScriptContract;
 
 namespace ProtoTestTool.Services
 {
@@ -30,14 +31,13 @@ namespace ProtoTestTool.Services
 
             // Build FullName → (PacketConvertor, MessageDescriptor) lookup once
             var lookup = new Dictionary<string, (PacketConvertor Convertor, MessageDescriptor Descriptor)>();
-            foreach (var p in ProtoLoaderManager.Instance.PacketsByName.Values)
-            {
-                var desc = p.Type
-                    .GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                    ?.GetValue(null) as MessageDescriptor;
 
-                if (desc != null)
-                    lookup[desc.FullName] = (p, desc);
+            foreach (var type in ScriptGlobals.Registry.GetMessageTypes())
+            {
+                if (type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                        ?.GetValue(null) is MessageDescriptor desc)
+
+                    lookup[desc.FullName] = (new PacketConvertor {Name = type.Name, Type = type}, desc);
             }
 
             foreach (var record in packets)

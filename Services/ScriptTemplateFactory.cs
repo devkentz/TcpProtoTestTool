@@ -71,8 +71,15 @@ public class PacketRegistry : IPacketRegistry
     private readonly Dictionary<int, MessageParser> _parsers = new();
 
     public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
+
     public Type? GetMessageType(int msgId) => _idToType.GetValueOrDefault(msgId);
+
     public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type);
+
+    public void RegisterMessageType(IReadOnlyList<Type> types)  throw new NotImplementedException();
+
+    public IReadOnlyList<Type> GetMessageTypesRequest()  => throw new NotImplementedException();
+
     public MessageParser GetParserById(int msgId) => _parsers[msgId];
 }";
 

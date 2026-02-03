@@ -60,7 +60,9 @@ namespace ProtoTestTool
                 // Clear state
                 _protoFolderPath = "";
                 _assemblyManager.Unload();
-                ProtoLoaderManager.Instance.Clear();
+                // ProtoLoaderManager.Instance.Clear(); // REMOVED
+                
+                
                 PacketSelectorControl.LoadPackets();
 
                 LoadingStatusText.Text = "Initializing workspace files...";
@@ -356,11 +358,6 @@ namespace ProtoTestTool
         {
             try
             {
-                // if (!string.IsNullOrWhiteSpace(protoPath) && Directory.Exists(protoPath))
-                // {
-                //     await LoadProtosFromFolderAsync(protoPath);
-                // }
-
                 Dispatcher.Invoke(() => AppendLog("[Workspace] Auto-compiling scripts...", Brushes.DeepSkyBlue));
                 await CompileScriptsAsync(workspacePath, (msg, brush) => Dispatcher.Invoke(() => AppendLog(msg, brush)));
             }
@@ -510,28 +507,6 @@ namespace ProtoTestTool
         // Field to track current proto folder
         private string _protoFolderPath = "";
         private AppState State { get; set; } = AppState.None;
-
-        private async Task LoadProtosFromFolderAsync(string folder)
-        {
-           // await Task.Run(() =>
-           // {
-           //     try
-           //     {
-           //         ProtoLoaderManager.Instance.LoadAllProtos(folder);
-//
-           //         Dispatcher.Invoke(() =>
-           //         {
-           //             PacketSelectorControl.Refresh();
-           //             AppendLog($"[Proto] Compiled and Loaded from {folder}", Brushes.Green);
-           //         });
-           //     }
-           //     catch (Exception ex)
-           //     {
-           //         Dispatcher.Invoke(() => AppendLog($"[Error] Proto Compile: {ex.Message}", Brushes.Red));
-           //         FileLogger.Instance.Error("LoadProtosFromFolderAsync failed", ex);
-           //     }
-           // });
-        }
 
         private void SaveWorkspaceSettings()
         {

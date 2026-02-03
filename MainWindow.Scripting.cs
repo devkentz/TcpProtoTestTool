@@ -73,10 +73,18 @@ namespace ProtoTestTool
                 InitializeScriptGlobals(registry, codec);
                 UpdateInterceptors(assembly, logAction);
 
-                PacketSelectorControl.Refresh();
+                var protoAssembly = _assemblyManager.ProtoAssembly;
+                if (protoAssembly != null)
+                {
+                    var protos = ProtobufHelper.GetIMessageTypes(protoAssembly);
+                    ScriptGlobals.Registry.RegisterMessageType(protos);
+                    var requestPackets = ScriptGlobals.Registry.GetMessageTypesRequest();
+
+                    await Dispatcher.InvokeAsync(() => PacketSelectorControl.RefreshPackets(requestPackets));
+                }
+                
+                
                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
-
-
             }
             catch (Exception ex)
             {
@@ -253,8 +261,8 @@ namespace ProtoTestTool
                 if (files.Length == 0)
                 {
                     ProtoLogBox.Text += "\n[Manager] No .proto files found in Protos folder. Clearing.";
-                    ProtoLoaderManager.Instance.Clear();
-                    PacketSelectorControl.Refresh();
+                    // ProtoLoaderManager.Instance.Clear(); // REMOVED
+                    PacketSelectorControl.LoadPackets();
                     return;
                 }
 
@@ -308,7 +316,10 @@ namespace ProtoTestTool
                 ProtoFileListBox.ItemsSource = _loadedProtoFiles;
 
                 // Refresh PacketSelector
-                PacketSelectorControl.Refresh();
+                var types = ProtobufHelper.GetIMessageTypes(assembly);
+                ScriptGlobals.Registry.RegisterMessageType(types);
+                var requestPackets = ScriptGlobals.Registry.GetMessageTypesRequest();
+                PacketSelectorControl.RefreshPackets(requestPackets);
 
                 // Recompile Scripts if valid workspace
                 if (!string.IsNullOrEmpty(_workspacePath))

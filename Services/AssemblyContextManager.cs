@@ -27,7 +27,7 @@ namespace ProtoTestTool.Services
             if (_context != null)
             {
                 // Clear References
-                ProtoLoaderManager.Instance.Clear();
+                // ProtoLoaderManager.Instance.Clear(); // REMOVED
                 ProtoAssembly = null;
                 ScriptAssembly = null;
 
@@ -56,8 +56,8 @@ namespace ProtoTestTool.Services
 
             ProtoAssembly = _context!.LoadFromFile(dllPath);
 
-            var messageTypes = ProtobufHelper.GetIMessageTypes(ProtoAssembly);
-            ProtoLoaderManager.Instance.InitPacket(messageTypes);
+            // var messageTypes = ProtobufHelper.GetIMessageTypes(ProtoAssembly);
+            // ProtoLoaderManager.Instance.InitPacket(messageTypes); // REMOVED
             return ProtoAssembly;
         }
 

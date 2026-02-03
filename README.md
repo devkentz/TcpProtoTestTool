@@ -15,7 +15,7 @@ Protobuf 기반 TCP 패킷 테스트 도구. 클라이언트 모드와 프록시
 - TCP 서버에 직접 연결하여 Protobuf 패킷 송수신
 - Monaco Editor 기반 JSON 편집기로 Request Body / Header 작성
 - Response Inspector에서 수신 패킷의 Body와 Header 확인
-- 패킷 검색 및 선택 UI
+- 패킷 검색 및 선택 UI (필터링 지원)
 
 ### Proxy 모드
 - 로컬 포트에서 리슨하고 업스트림 서버로 포워딩하는 프록시
@@ -51,15 +51,15 @@ Protobuf 기반 TCP 패킷 테스트 도구. 클라이언트 모드와 프록시
 ```
 MyWorkspace/
 ├── workspace_config.json       # 연결 설정 (IP, 포트, 프록시 설정)
+├── Script.dll                  # 스크립트 컴파일 결과 (자동 생성)
+├── Protos.dll                  # 프로토 컴파일 결과 (자동 생성)
 ├── Protos/                     # .proto 소스 파일
-│   └── Generated/              # protoc이 생성한 .cs 파일
 ├── Scripts/                    # C# 스크립트 소스
 │   ├── PacketCodec.cs          # IPacketCodec 구현
 │   ├── PacketRegistry.cs       # IPacketRegistry 구현
 │   ├── PacketInterceptor.cs    # IProxyPacketInterceptor 구현
 │   ├── PacketHeader.cs         # IHeader 구현
 │   ├── Libs/                   # NuGet 패키지 DLL
-│   └── Script.dll              # 컴파일 결과 (자동 생성)
 └── client_cache.db             # SQLite 상태 저장소
 ```
 
@@ -88,9 +88,15 @@ public interface IPacketCodec
 ```csharp
 public interface IPacketRegistry
 {
-    void Register(int id, Type type);
-    Type? GetMessageType(int id);
-    int GetMessageId(Type type);
+    IEnumerable<Type> GetMessageTypes();
+    Type? GetMessageType(int msgId);
+    int GetMsgId(Type type);
+    
+    void RegisterMessageType(IReadOnlyList<Type> types);
+    MessageParser GetParserById(int msgId); 
+    
+    // Request 패킷 목록 반환 (UI 표시용)
+    IReadOnlyList<Type> GetMessageTypesRequest();
 }
 ```
 
@@ -126,11 +132,9 @@ public interface IHeader
 | API | 설명 |
 |-----|------|
 | `ScriptGlobals.State` | 인메모리 + SQLite 상태 저장소 |
-| `ScriptGlobals.Log` | UI 로그 출력 |
-| `ScriptGlobals.Client` | 클라이언트 모드 API (Send, Delay) |
-| `ScriptGlobals.Proxy` | 프록시 모드 API |
-| `ScriptGlobals.Registry` | 패킷 레지스트리 |
-| `ScriptGlobals.Codec` | 패킷 코덱 |
+| `ScriptGlobals.Log` | UI 로그 출력 (색상 지원) |
+| `ScriptGlobals.Registry` | 패킷 레지스트리 (패킷 타입 정보) |
+| `ScriptGlobals.Codec` | 패킷 코덱 (인코딩/디코딩) |
 
 ---
 

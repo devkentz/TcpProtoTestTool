@@ -24,7 +24,10 @@ namespace ProtoTestTool.ScriptContract
         /// Gets the ID for a specific message type.
         /// </summary>
         int GetMsgId(Type type);
-
+        
+        void RegisterMessageType(IReadOnlyList<Type> types);
         MessageParser GetParserById(int msgId); 
+        
+        IReadOnlyList<Type> GetMessageTypesRequest();
     }
 }
