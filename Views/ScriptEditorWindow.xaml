@@ -231,12 +231,7 @@
                     <RowDefinition Height="150"/>    <!-- Output -->
                 </Grid.RowDefinitions>
 
-                <!-- Interceptor Tab Strip (hidden when empty) -->
-                <Border Grid.Row="0" x:Name="TabStripBorder" BorderBrush="#3F3F46" BorderThickness="0,0,0,1" Background="#252526" Visibility="Collapsed">
-                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                        <StackPanel x:Name="TabsPanel" Orientation="Horizontal" Background="Transparent"/>
-                    </ScrollViewer>
-                </Border>
+
 
                 <!-- Single Monaco WebView2 -->
                 <Grid Grid.Row="1">

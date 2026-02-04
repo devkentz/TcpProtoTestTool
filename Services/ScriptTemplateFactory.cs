@@ -61,26 +61,62 @@ using System.Linq;
 using Google.Protobuf;
 using ProtoTestTool.ScriptContract;
 
-// [Optional] Custom Packet Registry
-// Implement this to manually register packet types with IDs.
-// If not provided, the tool uses the default proto-based registry.
+// [Optional] Custom Packet Registry Implementation
 public class PacketRegistry : IPacketRegistry
 {
     private readonly Dictionary<int, Type> _idToType = new();
     private readonly Dictionary<Type, int> _typeToId = new();
-    private readonly Dictionary<int, MessageParser> _parsers = new();
+    
+    // Automatically populated system types
+    private IReadOnlyCollection<Type> _types = [];
 
-    public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
+    // Return registered types
+    public IEnumerable<Type> GetMessageTypes() => _types;
+    public IReadOnlyList<Type> GetMessageTypesRequest() => _types;
 
     public Type? GetMessageType(int msgId) => _idToType.GetValueOrDefault(msgId);
 
-    public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type);
+    public int GetMsgId(Type type)
+    {
+        if (_typeToId.TryGetValue(type, out var id))
+            return id;
+            
+        throw new KeyNotFoundException($""MsgId not found for type: {type.Name}"");
+    }
 
-    public void RegisterMessageType(IReadOnlyList<Type> types) => throw new NotImplementedException();
+    // Called automatically with all loaded Proto types
+    public void RegisterMessageType(IReadOnlyList<Type> types) 
+    {
+        _types = types.ToArray();
 
-    public IReadOnlyList<Type> GetMessageTypesRequest()  => throw new NotImplementedException();
+        // -----------------------------------------------------------------
+        // TODO: Map ID to Type here.
+        // You can use _types to iterate or manually register.
+        // -----------------------------------------------------------------
+        
+        // Example: Manual
+        // Register(1001, typeof(MyGame.LoginReq));
+        
+        // Example: Auto (by name/attribute/etc)
+        // foreach (var t in types) { ... }
+    }
+    
+    private void Register(int id, Type type)
+    { 
+        _idToType[id] = type;
+        _typeToId[type] = id;
+    }
 
-    public MessageParser GetParserById(int msgId) => _parsers[msgId];
+    public MessageParser GetParserById(int msgId)
+    {
+        if (_idToType.TryGetValue(msgId, out var type))
+        {
+            var prop = type.GetProperty(""Parser"", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (prop?.GetValue(null) is MessageParser parser)
+                return parser;
+        }
+        throw new NotImplementedException($""Parser not found for MsgId: {msgId}"");
+    }
 }";
 
         public static string GetInterceptorTemplate(string className) =>

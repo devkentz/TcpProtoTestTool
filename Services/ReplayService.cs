@@ -32,7 +32,7 @@ namespace ProtoTestTool.Services
             // Build FullName → (PacketConvertor, MessageDescriptor) lookup once
             var lookup = new Dictionary<string, (PacketConvertor Convertor, MessageDescriptor Descriptor)>();
 
-            foreach (var type in ScriptGlobals.Registry.GetMessageTypes())
+            foreach (var type in ScriptGlobals.Registry.GetMessageTypesRequest())
             {
                 if (type.GetProperty("Descriptor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
                         ?.GetValue(null) is MessageDescriptor desc)

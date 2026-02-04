@@ -132,6 +132,11 @@ namespace ProtoTestTool.Views
             // Wait for editor ready (max 10s)
             await Task.WhenAny(tcs.Task, Task.Delay(10000));
             _editorReady = true;
+
+            if (EditorWebView.CoreWebView2 != null)
+            {
+                EditorWebView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
+            }
         }
 
         private void LoadAllFiles()
@@ -186,15 +191,21 @@ namespace ProtoTestTool.Views
                 child.Background = isActive ? new SolidColorBrush(Color.FromRgb(0x37, 0x37, 0x3D)) : Brushes.Transparent;
             }
 
-            // Update Interceptor tabs
+            // Update Interceptor sidebar highlight
             if (isCoreScript)
             {
-                // Deselect all interceptor tabs
-                foreach (var tab in TabsPanel.Children.OfType<Border>())
+                // Deselect interceptor sidebar
+                foreach (var child in InterceptorListPanel.Children.OfType<Grid>())
                 {
-                    var sp = tab.Child as StackPanel;
-                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                    if (radio != null) radio.IsChecked = false;
+                    var itemBtn = child.Children.OfType<Button>().FirstOrDefault();
+                    if (itemBtn?.Content is StackPanel sp)
+                    {
+                         // Reset background for the button (or parent grid if preferred, but button styling is used here)
+                         // Based on the code, the button has the style. 
+                         // However, the CoreScripts use Button children directly.
+                         // Interceptors are Grid -> Button (Item) + Button (Delete).
+                         itemBtn.Background = Brushes.Transparent;
+                    }
                 }
             }
             else
@@ -203,13 +214,18 @@ namespace ProtoTestTool.Views
                 foreach (var child in CoreScriptsPanel.Children.OfType<Button>())
                     child.Background = Brushes.Transparent;
 
-                // Select matching interceptor tab
-                foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+                // Select matching interceptor sidebar item
+                foreach (var child in InterceptorListPanel.Children.OfType<Grid>())
                 {
-                    var sp = tabBorder.Child as StackPanel;
-                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                    if (radio != null)
-                        radio.IsChecked = radio.Tag?.ToString() == fileName;
+                    var itemBtn = child.Children.OfType<Button>().FirstOrDefault();
+                    if (itemBtn != null && itemBtn.Tag?.ToString() == fileName)
+                    {
+                        itemBtn.Background = new SolidColorBrush(Color.FromRgb(0x37, 0x37, 0x3D));
+                    }
+                    else if (itemBtn != null)
+                    {
+                        itemBtn.Background = Brushes.Transparent;
+                    }
                 }
             }
 
@@ -244,7 +260,8 @@ namespace ProtoTestTool.Views
         private void RefreshInterceptorList()
         {
             InterceptorListPanel.Children.Clear();
-            TabsPanel.Children.Clear();
+
+            // TabsPanel logic removed
 
             var interceptorFiles = _fileContents.Keys
                 .Where(f => !CoreScripts.Contains(f))
@@ -254,18 +271,10 @@ namespace ProtoTestTool.Views
             foreach (var fileName in interceptorFiles)
             {
                 AddInterceptorToSidebar(fileName);
-                AddInterceptorTab(fileName);
             }
-
-            UpdateTabStripVisibility();
         }
 
-        private void UpdateTabStripVisibility()
-        {
-            TabStripBorder.Visibility = TabsPanel.Children.Count > 0
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
+
 
         private void AddInterceptorToSidebar(string fileName)
         {
@@ -317,100 +326,16 @@ namespace ProtoTestTool.Views
             InterceptorListPanel.Children.Add(grid);
         }
 
-        private void AddInterceptorTab(string fileName)
-        {
-            var tabBorder = new Border
-            {
-                Tag = fileName,
-                Background = Brushes.Transparent,
-                Padding = new Thickness(0)
-            };
 
-            var sp = new StackPanel {Orientation = Orientation.Horizontal};
-
-            var radio = new RadioButton
-            {
-                Content = Path.GetFileNameWithoutExtension(fileName),
-                Tag = fileName,
-                Style = (Style) FindResource("InterceptorTabStyle"),
-                GroupName = "InterceptorTabs"
-            };
-            radio.Checked += InterceptorTab_Checked;
-
-            var closeBtn = new Button
-            {
-                Content = "\u2715",
-                Tag = fileName,
-                Style = (Style) FindResource("TabCloseBtnStyle"),
-                Margin = new Thickness(0, 0, 4, 0)
-            };
-            closeBtn.Click += TabClose_Click;
-
-            sp.Children.Add(radio);
-            sp.Children.Add(closeBtn);
-            tabBorder.Child = sp;
-
-            TabsPanel.Children.Add(tabBorder);
-        }
 
         private void InterceptorSidebar_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button btn || btn.Tag == null) return;
             var fileName = btn.Tag.ToString()!;
-
-            // Also select the corresponding tab
-            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
-            {
-                var sp = tabBorder.Child as StackPanel;
-                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                if (radio != null && radio.Tag?.ToString() == fileName)
-                {
-                    radio.IsChecked = true;
-                    return;
-                }
-            }
-
             _ = SwitchToFileAsync(fileName);
         }
 
-        private void InterceptorTab_Checked(object sender, RoutedEventArgs e)
-        {
-            if (sender is not RadioButton radio || radio.Tag == null) return;
-            var fileName = radio.Tag.ToString()!;
-            _ = SwitchToFileAsync(fileName);
-        }
-
-        private void TabClose_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button btn || btn.Tag == null) return;
-            var fileName = btn.Tag.ToString()!;
-
-            // Remove tab only (don't delete file)
-            var tabToRemove = TabsPanel.Children.OfType<Border>()
-                .FirstOrDefault(b => b.Tag?.ToString() == fileName);
-            if (tabToRemove != null)
-                TabsPanel.Children.Remove(tabToRemove);
-            UpdateTabStripVisibility();
-
-            // If this was the active file, switch to another
-            if (_activeFileName == fileName)
-            {
-                var firstTab = TabsPanel.Children.OfType<Border>().FirstOrDefault();
-                if (firstTab != null)
-                {
-                    var sp = firstTab.Child as StackPanel;
-                    var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                    if (radio != null)
-                    {
-                        radio.IsChecked = true;
-                        return;
-                    }
-                }
-
-                // Fall back to first core script
-                _ = SwitchToFileAsync(CoreScripts[0]);
-            }
-        }
+        // Tab logic removed
 
         // ========== Add Interceptor ==========
 
@@ -446,24 +371,12 @@ namespace ProtoTestTool.Views
                     _fileContents[fileName] = template;
                     _intelliSense?.UpdateDocument(fileName, template);
 
+                    _intelliSense?.UpdateDocument(fileName, template);
+
                     AddInterceptorToSidebar(fileName);
-                    AddInterceptorTab(fileName);
-                    UpdateTabStripVisibility();
 
                     // Switch to the new file
                     await SwitchToFileAsync(fileName);
-
-                    // Select tab
-                    foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
-                    {
-                        var sp = tabBorder.Child as StackPanel;
-                        var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                        if (radio != null && radio.Tag?.ToString() == fileName)
-                        {
-                            radio.IsChecked = true;
-                            break;
-                        }
-                    }
 
                     AppendLog($"Created {fileName}", Brushes.Green);
                 }
@@ -506,14 +419,13 @@ namespace ProtoTestTool.Views
             _fileContents.Remove(fileName);
             _dirtyFiles.Remove(fileName);
 
-            // Refresh sidebar and tabs
+            // Refresh sidebar
             RefreshInterceptorList();
 
             // Switch to another file if this was active
             if (_activeFileName == fileName)
             {
                 _activeFileName = null;
-
                 var firstInterceptor = _fileContents.Keys.FirstOrDefault(f => !CoreScripts.Contains(f));
                 await SwitchToFileAsync(firstInterceptor ?? CoreScripts[0]);
             }
@@ -578,15 +490,37 @@ namespace ProtoTestTool.Views
 
         private void UpdateAllTabDirtyIndicators()
         {
-            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
+             // Update Core Scripts
+            foreach (var child in CoreScriptsPanel.Children.OfType<Button>())
             {
-                var sp = tabBorder.Child as StackPanel;
-                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                if (radio?.Tag == null) continue;
+                if (child.Tag is string fileName)
+                {
+                    var baseName = Path.GetFileNameWithoutExtension(fileName);
+                    var txtBlock = ((StackPanel)child.Content).Children.OfType<TextBlock>().Skip(1).FirstOrDefault(); // 0 is icon, 1 is text
+                    if (txtBlock != null)
+                    {
+                        txtBlock.Text = _dirtyFiles.Contains(fileName) ? $"{baseName} *" : baseName;
+                    }
+                }
+            }
 
-                var fileName = radio.Tag.ToString()!;
-                var baseName = Path.GetFileNameWithoutExtension(fileName);
-                radio.Content = _dirtyFiles.Contains(fileName) ? $"{baseName} \u25cf" : baseName;
+            // Update Interceptors
+            foreach (var child in InterceptorListPanel.Children.OfType<Grid>())
+            {
+                var itemBtn = child.Children.OfType<Button>().FirstOrDefault(); // The file button
+                if (itemBtn?.Tag is string fileName)
+                {
+                    // Button content is StackPanel -> [Icon, Text]
+                    if (itemBtn.Content is StackPanel sp)
+                    {
+                        var txtBlock = sp.Children.OfType<TextBlock>().Skip(1).FirstOrDefault();
+                         if (txtBlock != null)
+                         {
+                             var baseName = Path.GetFileNameWithoutExtension(fileName);
+                             txtBlock.Text = _dirtyFiles.Contains(fileName) ? $"{baseName} *" : baseName;
+                         }
+                    }
+                }
             }
         }
 
@@ -876,17 +810,10 @@ namespace ProtoTestTool.Views
         {
             if (!_dirtyFiles.Add(fileName)) return;
 
-            // Update tab indicator
-            foreach (var tabBorder in TabsPanel.Children.OfType<Border>())
-            {
-                var sp = tabBorder.Child as StackPanel;
-                var radio = sp?.Children.OfType<RadioButton>().FirstOrDefault();
-                if (radio?.Tag?.ToString() == fileName)
-                {
-                    radio.Content = Path.GetFileNameWithoutExtension(fileName) + " \u25cf";
-                    break;
-                }
-            }
+            if (!_dirtyFiles.Add(fileName)) return;
+
+            // Update sidebar indicator
+            UpdateAllTabDirtyIndicators();
         }
 
         // ========== Lifecycle ==========

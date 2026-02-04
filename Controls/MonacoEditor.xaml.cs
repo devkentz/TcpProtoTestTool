@@ -150,14 +150,17 @@ namespace ProtoTestTool.Controls
                 return;
             }
              
-            if (EditorWebView.CoreWebView2 == null) return;
+            if (EditorWebView.CoreWebView2 == null) 
+                return;
+            
             var jsonContent = JsonConvert.SerializeObject(content);
             await EditorWebView.ExecuteScriptAsync($"setContent({jsonContent});");
         }
 
         public async Task<string> GetTextAsync()
         {
-            if (!_isReady || EditorWebView.CoreWebView2 == null) return string.Empty;
+            if (!_isReady || EditorWebView.CoreWebView2 == null) 
+                return _pendingContent ?? string.Empty;
             
             try 
             {
