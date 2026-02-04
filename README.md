@@ -57,7 +57,7 @@ MyWorkspace/
 ├── Scripts/                    # C# 스크립트 소스
 │   ├── PacketCodec.cs          # IPacketCodec 구현
 │   ├── PacketRegistry.cs       # IPacketRegistry 구현
-│   ├── PacketInterceptor.cs    # IProxyPacketInterceptor 구현
+│   ├── PacketInterceptor.cs    # IPacketInterceptor 구현
 │   ├── PacketHeader.cs         # IHeader 구현
 │   ├── Libs/                   # NuGet 패키지 DLL
 └── client_cache.db             # SQLite 상태 저장소
@@ -100,19 +100,19 @@ public interface IPacketRegistry
 }
 ```
 
-### IProxyPacketInterceptor
+### IPacketInterceptor
 
-프록시 모드에서 패킷을 가로채 처리합니다.
+프록시 모드(또는 클라이언트/리플레이)에서 패킷을 가로채 처리합니다.
 
 ```csharp
-public interface IProxyPacketInterceptor
+public interface IPacketInterceptor
 {
-    ValueTask OnOutboundAsync(ProxyPacketContext context);  // Client -> Server
-    ValueTask OnInboundAsync(ProxyPacketContext context);   // Server -> Client
+    ValueTask OnInboundAsync(PacketContext context);   // Server -> Client
+    ValueTask OnOutboundAsync(PacketContext context);  // Client -> Server
 }
 ```
 
-`ProxyPacketContext`를 통해 패킷 수정(`context.Packet`), 드롭(`context.Drop = true`), 바이패스(`context.Bypass = true`)가 가능합니다.
+`PacketContext`를 통해 패킷 수정(`context.Packet`), 드롭(`context.Drop = true`), 바이패스(`context.Bypass = true`)가 가능합니다.
 
 ### IHeader
 
@@ -155,3 +155,10 @@ dotnet publish -c Release
 
 ---
 
+## 프록시 패킷 처리 흐름
+
+```mermaid
+graph LR
+    Client -->|Request| D1[Decode] --> P1[Pipeline] --> E1[Encode] -->|Forward| Server
+    Server -->|Response| D2[Decode] --> P2[Pipeline] --> E2[Encode] -->|Response| Client
+```
