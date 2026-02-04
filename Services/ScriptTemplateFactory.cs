@@ -17,7 +17,7 @@ namespace ProtoTestTool.Services
         }
 
         public static string GetPacketHeaderTemplate() =>
-@"using System;
+            @"using System;
 using ProtoTestTool.ScriptContract;
 
 // [Mandatory] Packet Header Definition
@@ -32,7 +32,7 @@ public class Header : IHeader
 }";
 
         public static string GetPacketCodecTemplate() =>
-@"using System;
+            @"using System;
 using System.Buffers;
 using ProtoTestTool.ScriptContract;
 
@@ -55,7 +55,7 @@ public class PacketCodec : IPacketCodec
 }";
 
         public static string GetPacketRegistryTemplate() =>
-@"using System;
+            @"using System;
 using System.Collections.Generic;
 using System.Linq;
 using Google.Protobuf;
@@ -76,7 +76,7 @@ public class PacketRegistry : IPacketRegistry
 
     public int GetMsgId(Type type) => _typeToId.GetValueOrDefault(type);
 
-    public void RegisterMessageType(IReadOnlyList<Type> types)  throw new NotImplementedException();
+    public void RegisterMessageType(IReadOnlyList<Type> types) => throw new NotImplementedException();
 
     public IReadOnlyList<Type> GetMessageTypesRequest()  => throw new NotImplementedException();
 
@@ -84,7 +84,7 @@ public class PacketRegistry : IPacketRegistry
 }";
 
         public static string GetInterceptorTemplate(string className) =>
-$@"using System;
+            $@"using System;
 using System.Threading.Tasks;
 using ProtoTestTool.ScriptContract;
 

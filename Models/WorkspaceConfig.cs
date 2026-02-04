@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Newtonsoft.Json;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Models
 {
     public class WorkspaceConfig
     {

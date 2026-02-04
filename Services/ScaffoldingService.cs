@@ -13,22 +13,21 @@ namespace ProtoTestTool.Services
                 Directory.CreateDirectory(workspacePath);
             }
 
-            var scriptsDir = Path.Combine(workspacePath, "Scripts");
-            var protosDir = Path.Combine(workspacePath, "Protos");
-            var libsDir = Path.Combine(scriptsDir, "Libs");
+            var scriptsDir = Path.Combine(workspacePath, BuildConstants.ScriptsFolder);
+            var protosDir = Path.Combine(workspacePath, BuildConstants.ProtosFolder);
+            var libsDir = Path.Combine(scriptsDir, BuildConstants.LibsFolder);
 
             Directory.CreateDirectory(scriptsDir);
             Directory.CreateDirectory(protosDir);
             Directory.CreateDirectory(libsDir);
 
-            await CreateFileIfNotExists(Path.Combine(protosDir, "readme.txt"), 
-                "Place your .proto files in this directory.\nThey will be automatically compiled and loaded.");
+            await CreateFileIfNotExists(Path.Combine(protosDir, BuildConstants.FileNameReadme),
+                BuildConstants.ReadmeContent);
 
             // Create Default Script Templates
-            await CreateFileIfNotExists(Path.Combine(scriptsDir, "PacketInterceptor.cs"), GetPacketInterceptorTemplate());
-            await CreateFileIfNotExists(Path.Combine(scriptsDir, "PacketCodec.cs"), GetPacketCodecTemplate());
-            await CreateFileIfNotExists(Path.Combine(scriptsDir, "PacketRegistry.cs"), GetPacketRegistryTemplate());
-            await CreateFileIfNotExists(Path.Combine(scriptsDir, "PacketHeader.cs"), GetPacketHeaderTemplate());
+            await CreateFileIfNotExists(Path.Combine(scriptsDir, BuildConstants.FileNamePacketCodec), ScriptTemplateFactory.GetTemplate(BuildConstants.TemplatePacketCodec));
+            await CreateFileIfNotExists(Path.Combine(scriptsDir, BuildConstants.FileNamePacketRegistry), ScriptTemplateFactory.GetTemplate(BuildConstants.TemplatePacketRegistry));
+            await CreateFileIfNotExists(Path.Combine(scriptsDir, BuildConstants.FileNamePacketHeader), ScriptTemplateFactory.GetTemplate(BuildConstants.TemplatePacketHeader));
         }
 
         private async Task CreateFileIfNotExists(string path, string content)
@@ -38,83 +37,5 @@ namespace ProtoTestTool.Services
                 await File.WriteAllTextAsync(path, content);
             }
         }
-
-        private string GetPacketInterceptorTemplate() =>
-@"using System;
-using System.Threading.Tasks;
-using ProtoTestTool.ScriptContract;
-
-public class Interceptor : IProxyPacketInterceptor
-{
-    public ValueTask OnInboundAsync(ProxyPacketContext context)
-    {
-        throw new NotImplementedException();
-    }
-
-    public ValueTask OnOutboundAsync(ProxyPacketContext context)
-    {
-        throw new NotImplementedException();
-    }
-}";
-
-        private string GetPacketCodecTemplate() =>
-@"using System;
-using System.Buffers;
-using ProtoTestTool.ScriptContract;
-
-public class PacketCodec : IPacketCodec
-{
-    public int TryDecode(ref ReadOnlySpan<byte> span, out Packet? packet)
-    {
-        throw new NotImplementedException();
-    }
-
-    public ReadOnlyMemory<byte> Encode(Packet packet)
-    {
-        throw new NotImplementedException();
-    }
-}";
-
-        private string GetPacketHeaderTemplate() =>
-@"using System;
-using ProtoTestTool.ScriptContract;
-
-public class Header : IHeader
-{
-    public string ToJsonString()
-    {
-        throw new NotImplementedException();
-    }
-}";
-
-        private string GetPacketRegistryTemplate() =>
-@"using System;
-using System.Collections.Generic;
-using ProtoTestTool.ScriptContract;
-using Google.Protobuf;
-
-public class PacketRegistry : IPacketRegistry
-{
-    private readonly Dictionary<int, Type> _idToType = new Dictionary<int, Type>();
-    private readonly Dictionary<Type, int> _typeToId = new Dictionary<Type, int>();
-
-    public void Register(int msgId, Type type, string? msgName = null, bool? isRequest = null)
-    {
-        _idToType[msgId] = type;
-        _typeToId[type] = msgId;
-    }
-
-    public IEnumerable<Type> GetMessageTypes() => _idToType.Values;
-
-    public Type? GetMessageType(int msgId) => _idToType.TryGetValue(msgId, out var type) ? type : null;
-
-    public int GetMsgId(Type type) => _typeToId.TryGetValue(type, out var id) ? id : 0;
-
-    public MessageParser GetParserById(int msgId)
-    {
-        throw new NotImplementedException();
-    }
-}";
-
     }
 }

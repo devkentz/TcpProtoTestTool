@@ -13,7 +13,9 @@ using Newtonsoft.Json;
 using ProtoTestTool.Controls;
 using ProtoTestTool.Network;
 using ProtoTestTool.ScriptContract;
+using ProtoTestTool.Models;
 using ProtoTestTool.Services;
+using ProtoTestTool.Views;
 
 namespace ProtoTestTool
 {

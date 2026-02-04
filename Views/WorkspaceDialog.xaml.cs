@@ -1,7 +1,9 @@
 using System.IO;
 using System.Windows;
+using ProtoTestTool.Models;
+using ProtoTestTool.Services;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Views
 {
     public partial class WorkspaceDialog : Wpf.Ui.Controls.FluentWindow
     {
@@ -96,7 +98,7 @@ namespace ProtoTestTool
         {
              try
              {
-                 var scaffolder = new Services.ScaffoldingService();
+                 var scaffolder = new ScaffoldingService();
                  await scaffolder.InitializeWorkspaceAsync(path);
                  SelectWorkspace(path);
              }

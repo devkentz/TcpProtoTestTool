@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Text.Json;
 using ProtoTestTool.Services.ScriptBuilder;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Services
 {
     public class NuGetPackageInfo
     {

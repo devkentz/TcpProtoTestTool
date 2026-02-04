@@ -1,0 +1,43 @@
+<ui:FluentWindow x:Class="ProtoTestTool.Views.FluentConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:Wpf.Ui.Controls;assembly=Wpf.Ui"
+        Title="Confirm"
+        Height="230" Width="460"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowCornerPreference="Round">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="{Binding Path=Title, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+        <Grid Grid.Row="1" Margin="20,10,20,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <ui:SymbolIcon Symbol="Warning24" FontSize="32" Foreground="{DynamicResource SystemFillColorCautionBrush}" VerticalAlignment="Top" Margin="0,2,15,0"/>
+            <TextBlock x:Name="MessageText" Grid.Column="1" TextWrapping="Wrap" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Top"/>
+        </Grid>
+
+        <Border Grid.Row="2" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" Padding="15">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="Delete from disk" Appearance="Danger" Click="YesButton_Click" Margin="0,0,8,0">
+                    <ui:Button.Icon>
+                        <ui:SymbolIcon Symbol="Delete24"/>
+                    </ui:Button.Icon>
+                </ui:Button>
+                <ui:Button Content="List only" Appearance="Primary" Click="NoButton_Click" Margin="0,0,8,0"/>
+                <ui:Button Content="Cancel" Appearance="Secondary" Click="CancelButton_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

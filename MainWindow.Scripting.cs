@@ -9,6 +9,8 @@ using ProtoTestTool.ScriptContract;
 using ProtoTestTool.Services;
 using ProtoTestTool.Services.ScriptBuilder;
 using ProtoTestTool.Services.ProtoBuilder;
+using ProtoTestTool.Models;
+using ProtoTestTool.Views;
 
 namespace ProtoTestTool
 {
@@ -195,18 +197,18 @@ namespace ProtoTestTool
             if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath)) 
                 return;
 
-            var scriptsDir = Path.Combine(workspacePath, "Scripts");
+            var scriptsDir = Path.Combine(workspacePath, BuildConstants.ScriptsFolder);
             
             if (!Directory.Exists(scriptsDir)) 
                 Directory.CreateDirectory(scriptsDir);
 
             // Create default .cs files
-            CreateIfMissing(scriptsDir, "PacketHeader.cs", "PacketHeader");
-            CreateIfMissing(scriptsDir, "PacketCodec.cs", "PacketCodec");
-            CreateIfMissing(scriptsDir, "PacketRegistry.cs", "PacketRegistry");
-            CreateIfMissing(scriptsDir, "PacketInterceptor.cs", "PacketInterceptor");
+            CreateIfMissing(scriptsDir, BuildConstants.FileNamePacketHeader, BuildConstants.TemplatePacketHeader);
+            CreateIfMissing(scriptsDir, BuildConstants.FileNamePacketCodec, BuildConstants.TemplatePacketCodec);
+            CreateIfMissing(scriptsDir, BuildConstants.FileNamePacketRegistry, BuildConstants.TemplatePacketRegistry);
+            // CreateIfMissing(scriptsDir, BuildConstants.FileNamePacketInterceptor, BuildConstants.TemplatePacketInterceptor);
 
-            var configPath = Path.Combine(workspacePath, "workspace_config.json");
+            var configPath = Path.Combine(workspacePath, BuildConstants.FileNameWorkspaceConfig);
             if (!File.Exists(configPath))
             {
                 var defaultConfig = new WorkspaceConfig();

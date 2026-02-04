@@ -7,7 +7,7 @@ using Microsoft.Web.WebView2.Core;
 using ProtoTestTool.Controls;
 using ProtoTestTool.Services;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Views
 {
     public partial class ScriptEditorWindow : Wpf.Ui.Controls.FluentWindow
     {

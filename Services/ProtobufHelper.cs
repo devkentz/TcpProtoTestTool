@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace ProtoTestTool.Services;
 
-public class ProtobufHelper
+internal static class ProtobufHelper
 {
     public static List<Type> GetIMessageTypes(Assembly assembly)
     {

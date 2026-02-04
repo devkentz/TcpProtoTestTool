@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
+using ProtoTestTool.Views;
 
 namespace ProtoTestTool
 {

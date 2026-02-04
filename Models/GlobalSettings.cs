@@ -1,7 +1,7 @@
 using System.IO;
 using Newtonsoft.Json;
 
-namespace ProtoTestTool
+namespace ProtoTestTool.Models
 {
     public class GlobalSettings
     {
