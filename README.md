@@ -159,31 +159,26 @@ dotnet publish -c Release
 
 ```mermaid
 graph TD
-    Client[Client] -->|TCP Connect| ProxyServer
-    ProxyServer[Proxy Server (Local Port)] --> ProxySession
+    Client[Client] -->|TCP Connect| Proxy[Proxy Server]
+    Proxy --> Session[Proxy Session]
 
-    subgraph ProxySession [Proxy Session Handling]
+    subgraph ProxyScope [Proxy Session Scope]
         direction TB
         
-        subgraph Outbound [Outbound (Client -> Server)]
-            OC[Outbound Channel] --> OB[ByteBuffer]
-            OB --> ODec[Codec.TryDecode]
-            ODec --> OCtx[ProxyPacketContext]
-            OCtx --> OPipe[Pipeline.RunOutboundAsync]
-            OPipe --> OEnc[Codec.Encode]
+        subgraph Outbound [Outbound Flow]
+            direction TB
+            O_Dec[Codec.Decode] --> O_Pipe[Pipeline.RunAsync]
+            O_Pipe --> O_Enc[Codec.Encode]
         end
 
-        subgraph Inbound [Inbound (Server -> Client)]
-            UC[UpstreamClient] --> ICh[Inbound Channel]
-            ICh --> IB[ByteBuffer]
-            IB --> IDec[Codec.TryDecode]
-            IDec --> ICtx[ProxyPacketContext]
-            ICtx --> IPipe[Pipeline.RunInboundAsync]
-            IPipe --> IEnc[Codec.Encode]
+        subgraph Inbound [Inbound Flow]
+            direction TB
+            I_Dec[Codec.Decode] --> I_Pipe[Pipeline.RunAsync]
+            I_Pipe --> I_Enc[Codec.Encode]
         end
-
-        OEnc -->|Forward| UpstreamServer[Upstream Server]
-        UpstreamServer -->|Response| UC
-        IEnc -->|Response| Client
     end
+
+    Session --> Outbound -->|Forward| Upstream[Upstream Server]
+    Upstream -->|Response| Inbound -->|Response| Client
+
 ```
