@@ -13,12 +13,14 @@ namespace ProtoTestTool.Views
     {
         private readonly string _workspacePath;
         private readonly NuGetClient _client;
+        private readonly Action? _onPackageChanged;
 
-        public NuGetWindow(string workspacePath)
+        public NuGetWindow(string workspacePath, Action? onPackageChanged = null)
         {
             InitializeComponent();
             _workspacePath = workspacePath;
             _client = new NuGetClient();
+            _onPackageChanged = onPackageChanged;
         }
 
         private async void SearchBtn_Click(object sender, RoutedEventArgs e)
@@ -70,6 +72,7 @@ namespace ProtoTestTool.Views
                 {
                     await _client.InstallPackageAsync(pkg.Id, pkg.Version, _workspacePath);
                     StatusText.Text = $"Successfully installed {pkg.Id}. References updated.";
+                    _onPackageChanged?.Invoke();
                     
                     System.Windows.MessageBox.Show($"Installed {pkg.Id} to Libs folder.\nThe tool will auto-reference it on next compilation.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
@@ -116,6 +119,7 @@ namespace ProtoTestTool.Views
                     {
                         _client.UninstallPackage(pkg.Id, _workspacePath);
                         StatusText.Text = $"Uninstalled {pkg.Id}.";
+                        _onPackageChanged?.Invoke();
                         RefreshInstalledPackages();
                     }
                     catch (Exception ex)

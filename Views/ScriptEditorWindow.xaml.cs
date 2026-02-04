@@ -618,10 +618,27 @@ namespace ProtoTestTool.Views
 
         // ========== NuGet ==========
 
+        public async Task RefreshEnvironmentAsync()
+        {
+            Dispatcher.Invoke(() => SetStatus("Refreshing..."));
+            try
+            {
+                await InitializeIntelliSenseAsync();
+                RefreshLibsList();
+                RefreshInterceptorList();
+                SetStatus("Ready");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Refresh failed: {ex.Message}", Brushes.Orange);
+                SetStatus("Error");
+            }
+        }
+
         private void PackagesBtn_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_workspacePath)) return;
-            var window = new NuGetWindow(_workspacePath) {Owner = this};
+            var window = new NuGetWindow(_workspacePath, () => _ = RefreshEnvironmentAsync()) {Owner = this};
             window.ShowDialog();
         }
 

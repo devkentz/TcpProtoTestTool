@@ -87,6 +87,8 @@ namespace ProtoTestTool
                 
                 
                 await Dispatcher.InvokeAsync(() => _ = LoadHeaderJsonAsync());
+                
+                await Dispatcher.InvokeAsync(() => _scriptEditorWindow?.RefreshEnvironmentAsync());
             }
             catch (Exception ex)
             {
@@ -322,6 +324,8 @@ namespace ProtoTestTool
                 ScriptGlobals.Registry.RegisterMessageType(types);
                 var requestPackets = ScriptGlobals.Registry.GetMessageTypesRequest();
                 PacketSelectorControl.RefreshPackets(requestPackets);
+
+                await Dispatcher.InvokeAsync(() => _scriptEditorWindow?.RefreshEnvironmentAsync());
 
                 // Recompile Scripts if valid workspace
                 if (!string.IsNullOrEmpty(_workspacePath))
