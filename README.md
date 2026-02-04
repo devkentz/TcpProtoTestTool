@@ -162,3 +162,14 @@ graph LR
     Client -->|Request| D1[Decode] --> P1[Pipeline] --> E1[Encode] -->|Forward| Server
     Server -->|Response| D2[Decode] --> P2[Pipeline] --> E2[Encode] -->|Response| Client
 ```
+
+---
+
+## 프리뷰
+
+| | |
+|:---:|:---:|
+| <img src="Screenshots/screenshot (1).png" width="400"/> | <img src="Screenshots/screenshot (8).png" width="400"/> |
+| <img src="Screenshots/screenshot (9).png" width="400"/> | <img src="Screenshots/screenshot (10).png" width="400"/> |
+| <img src="Screenshots/screenshot (11).png" width="400"/> | <img src="Screenshots/screenshot (12).png" width="400"/> |
+| <img src="Screenshots/screenshot (13).png" width="400"/> | <img src="Screenshots/screenshot (14).png" width="400"/> |
